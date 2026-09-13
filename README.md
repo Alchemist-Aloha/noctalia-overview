@@ -2,7 +2,7 @@
 
 A Noctalia v5 Luau port of Hypr Overview. The `workspaces` bar widget shows the current group of Hyprland workspaces; hover it for a live window-thumbnail preview, or click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
 
-The thumbnails are refreshed from Hyprland toplevel captures while either panel is visible. This requires Hyprland's foreign-toplevel capture support and a `grim` build with `-T` (`grim -h` lists it). If a window cannot be captured, its application icon or name remains visible. The preview is read-only apart from clicking a workspace or window; the overview supports window-to-workspace drag and drop, keyboard workspace navigation, scrolling from the bar, and workspace/window focus.
+The featured window in each workspace has a live thumbnail while either panel is visible; other windows appear in a compact list. This requires Hyprland's foreign-toplevel capture support and a `grim` build with `-T` (`grim -h` lists it). If a window cannot be captured, its application icon or name remains visible. The preview is read-only apart from clicking a workspace or window; the overview supports window-to-workspace drag and drop, keyboard workspace navigation, workspace switching by scrolling the bar, and workspace/window focus.
 
 ## Install and use
 

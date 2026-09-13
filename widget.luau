@@ -22,18 +22,29 @@ local function render()
     local id = start + i
     if not barWidget.isVertical() or i < columns then
       local occupied = windows[id] and windows[id] > 0
-      table.insert(children, ui.label({
+      local selected = id == active
+      table.insert(children, ui.row({
         key = "ws-" .. id,
-        text = tostring(id) .. (occupied and "•" or ""),
-        color = id == active and "primary" or "on_surface",
-        fontWeight = id == active and "bold" or "medium",
+        gap = 3, paddingH = 6, paddingV = 3, radius = 6,
+        align = "center",
+        fill = selected and "primary/0.2" or "surface_variant/0.35",
+        border = selected and "primary/0.55" or "outline/0.15",
+        borderWidth = 1,
+      }, {
+        ui.label({
+          text = tostring(id),
+          color = selected and "primary" or "on_surface_variant",
+          fontWeight = selected and "bold" or "medium", fontSize = 11,
+        }),
+        ui.label({ text = occupied and "•" or "", fontSize = 10,
+          color = selected and "primary" or "secondary" }),
       }))
     end
   end
   if barWidget.isVertical() then
     barWidget.render(ui.column({ gap = 3, padding = 4, align = "center" }, children))
   else
-    barWidget.render(ui.row({ gap = 8, paddingH = 8, align = "center" }, children))
+    barWidget.render(ui.row({ gap = 4, paddingH = 6, align = "center" }, children))
   end
 end
 
@@ -100,6 +111,7 @@ end
 
 function onIpc(event)
   if event == "toggle" or event == "open" then
+    noctalia.state.set("overview_output", "")
     noctalia.togglePanel(OVERVIEW)
   elseif event == "preview" then
     noctalia.togglePanel(PREVIEW)

@@ -94,4 +94,4 @@ height = 720
 placement = "floating"
 position = "center"
 keyboard_focus = "exclusive"
-capture_keys = ["Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]

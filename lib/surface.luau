@@ -18,6 +18,7 @@ function M.new(preview)
     page = 0,
     selected = 1,
     selectedWindow = nil,
+    hoveredWindow = nil,
     fetching = false,
     iconCache = {},
     generation = 0,
@@ -34,7 +35,7 @@ function M.new(preview)
       return noctalia.tr("panel.special") .. " " .. string.sub(name, 9)
     end
     if name ~= tostring(ws.id) and name ~= "" then
-      return tostring(ws.id) .. " · " .. short(name, 18)
+      return tostring(ws.id) .. " · " .. short(name, preview and 11 or 18)
     end
     return tostring(ws.id)
   end
@@ -49,6 +50,19 @@ function M.new(preview)
     panel.close()
   end
 
+  local function clientIcon(client, size)
+    local appId = tostring(client.class or "")
+    local appIcon = self.iconCache[appId]
+    if appIcon == nil then
+      appIcon = noctalia.appIconPath(appId, size) or false
+      self.iconCache[appId] = appIcon
+    end
+    if appIcon then
+      return ui.image({ path = appIcon, width = size, height = size, fit = "contain" })
+    end
+    return ui.glyph({ name = "app-window", size = size, color = "on_surface_variant" })
+  end
+
   local function windowNode(client, width, featured)
     local address = tostring(client.address or "")
     local title = short(client.title or client.class or address, preview and 20 or 34)
@@ -58,7 +72,7 @@ function M.new(preview)
       table.insert(children, ui.image({
         key = "image-" .. address,
         path = image,
-        width = width - 16,
+        width = width - 32,
         height = preview and 62 or 104,
         fit = "contain",
         radius = 5,
@@ -66,33 +80,42 @@ function M.new(preview)
         borderWidth = 1,
       }))
     elseif featured then
-      local appId = tostring(client.class or "")
-      local appIcon = self.iconCache[appId]
-      if appIcon == nil then
-        appIcon = noctalia.appIconPath(appId, 32) or false
-        self.iconCache[appId] = appIcon
-      end
-      if appIcon then
-        table.insert(children, ui.image({ path = appIcon, width = 28, height = 28, fit = "contain" }))
-      else
-        table.insert(children, ui.glyph({ name = "app-window", size = 24, color = "on_surface_variant" }))
-      end
+      table.insert(children, ui.row({
+        width = width - 32, height = preview and 62 or 104,
+        fill = "surface_variant/0.6", radius = 5,
+        align = "center", justify = "center",
+      }, { clientIcon(client, 28) }))
     end
     if noctalia.getConfig("show_titles") then
-      table.insert(children, ui.label({ text = title, maxLines = 1, maxWidth = width - 16, fontSize = 11 }))
+      local caption = { clientIcon(client, 14), ui.label({ text = title, maxLines = 1,
+        maxWidth = width - 50, fontSize = 11, flexGrow = 1 }) }
       local flags = (client.floating and " ◇" or "") .. (((tonumber(client.fullscreen) or 0) ~= 0) and " ⛶" or "") .. (client.urgent and " !" or "")
       if flags ~= "" then
-        table.insert(children, ui.label({ text = flags, color = "secondary", fontSize = 10 }))
+        table.insert(caption, ui.label({ text = flags, color = client.urgent and "error" or "secondary", fontSize = 10 }))
       end
+      table.insert(children, ui.row({ gap = 4, align = "center" }, caption))
     elseif not featured then
-      table.insert(children, ui.label({ text = short(client.class or address, 22), fontSize = 11, color = "on_surface_variant" }))
+      table.insert(children, ui.row({ gap = 4, align = "center" }, {
+        clientIcon(client, 14),
+        ui.label({ text = short(client.class or address, 22), fontSize = 11, color = "on_surface_variant" }),
+      }))
     end
     local body = ui.column({
       key = "window-" .. address,
       gap = 3,
       padding = 4,
-      fill = self.selectedWindow == address and "primary/0.18" or "surface_variant/0.45",
+      fill = self.selectedWindow == address and "primary/0.18"
+        or (self.hoveredWindow == address and "primary/0.10" or "surface_variant/0.45"),
       radius = 5,
+      onHover = function(entered)
+        local inside = entered == true or entered == "true"
+        if not inside and self.hoveredWindow ~= address then return end
+        local nextHovered = inside and address or nil
+        if self.hoveredWindow ~= nextHovered then
+          self.hoveredWindow = nextHovered
+          render()
+        end
+      end,
       onClick = function()
         self.selectedWindow = address
         if preview then
@@ -124,9 +147,10 @@ function M.new(preview)
     })
     local children = { ui.row({ align = "center", gap = 5 }, {
       heading,
-      ui.label({ text = tostring(#(ws.clients or {})), fontSize = 11, color = "secondary" }),
+      ui.label({ text = tostring(#(ws.clients or {})), fontSize = 11,
+        color = #(ws.clients or {}) > 0 and "secondary" or "on_surface_variant" }),
     }) }
-    if ws.active then
+    if ws.active and not preview then
       table.insert(children, ui.label({ text = noctalia.tr("panel.active"), fontSize = 10, color = "primary" }))
     end
     if ws.monitor and ws.monitor ~= "" and not preview then
@@ -215,7 +239,7 @@ function M.new(preview)
     if not preview and not self.selectedWindow then
       table.insert(content, ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }))
     end
-    panel.render(ui.column({ gap = 10, padding = 12 }, content))
+    panel.render(ui.column({ height = preview and 396 or 696, gap = 10, padding = 12 }, content))
   end
 
   function self:update()
@@ -234,8 +258,9 @@ function M.new(preview)
       local remaining = noctalia.getConfig("max_captures") or 12
       local captures = {}
       for _, ws in ipairs(self.visible) do
-        for _, client in ipairs(ws.clients or {}) do
-          if remaining <= 0 then break end
+        if remaining <= 0 then break end
+        local client = (ws.clients or {})[1]
+        if client then
           captures[#captures + 1] = client
           remaining = remaining - 1
         end
@@ -254,6 +279,7 @@ function M.new(preview)
     self.page = 0
     self.selected = 1
     self.selectedWindow = nil
+    self.hoveredWindow = nil
     render()
     self:update()
     noctalia.setUpdateInterval(noctalia.getConfig("capture_interval_ms") or 1200)
@@ -262,12 +288,15 @@ function M.new(preview)
   function self:close()
     self.generation = self.generation + 1
     self.opened = false
+    self.hoveredWindow = nil
     self.capture:clear()
   end
 
   function self:key(chord, pressed)
-    if preview or not pressed or #self.visible == 0 then return end
-    local columns = noctalia.getConfig("columns") or 5
+    if preview or not pressed then return end
+    if chord == "Escape" then panel.close(); return end
+    if #self.visible == 0 then return end
+    local columns = math.min(noctalia.getConfig("columns") or 5, 5)
     if chord == "Left" or chord == "h" then
       self.selected = math.max(1, self.selected - 1)
     elseif chord == "Right" or chord == "l" then
