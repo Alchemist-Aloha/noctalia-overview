@@ -1,6 +1,6 @@
 # Noctalia Overview
 
-A Noctalia v5 Luau port of Hypr Overview. The `workspaces` bar widget shows the current group of Hyprland workspaces; hover it for a live window-thumbnail preview, or click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
+A Noctalia v5 Luau port of Hypr Overview. The `workspaces` bar widget uses Noctalia-style unlabeled pills, with a longer active pill; hover it for a live window-thumbnail preview, or click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
 
 The featured window in each workspace has a live thumbnail while either panel is visible; other windows appear in a compact list. This requires Hyprland's foreign-toplevel capture support and a `grim` build with `-T` (`grim -h` lists it). If a window cannot be captured, its application icon or name remains visible. The preview is read-only apart from clicking a workspace or window; the overview supports window-to-workspace drag and drop, keyboard workspace navigation, workspace switching by scrolling the bar, and workspace/window focus.
 
@@ -30,7 +30,7 @@ For an on-screen hover preview, move the pointer over the plugin's `workspaces` 
 
 ## Settings and controls
 
-Settings → Plugins → Noctalia Overview exposes rows, columns, empty and special workspaces, titles, hover preview, capture interval, and a capture-count limit. The bar widget is scoped to its output. The overview has previous/next page controls, drag-to-move windows, and a focus/floating action for a selected window. Arrow keys or H/J/K/L select a workspace; Enter opens it; number keys 1–0 jump to slots 1–10. Escape closes the panel.
+Settings → Plugins → Noctalia Overview exposes rows, columns, empty and special workspaces, titles, hover preview, capture interval, and a capture-count limit. Each bar widget shows the real workspaces on its own monitor, including IDs beyond the overview's numbered page, and shows only occupied/active workspaces by default; enable “Show empty workspaces in bar” to include real empty ones. Special workspaces appear only when “Show special workspaces” is enabled. The overview has previous/next page controls, drag-to-move windows, and a focus/floating action for a selected window. Arrow keys or H/J/K/L select a workspace; Enter opens it; number keys 1–0 jump to slots 1–10. Escape closes the panel.
 
 This v5 native panel cannot reproduce the v4 QML overlay's exact window geometry, shader effects, per-monitor full-screen surfaces, and retile visualization. The port keeps live window content and the core navigation/move behavior within the v5 declarative UI.
 

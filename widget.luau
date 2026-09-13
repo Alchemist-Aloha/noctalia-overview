@@ -4,98 +4,152 @@ local OVERVIEW = "alchemistaloha/noctalia-overview:overview"
 local hypr = require("./lib/hypr.luau")
 local active = 1
 local windows = {}
+local workspaces = {}
+local displayedIds = {}
+local monitorNames = {}
 local busy = false
-local hoverOpen = false
+local hoverOpen = noctalia.state.get("preview_open") == true
+local overviewOpen = noctalia.state.get("overview_open") == true
+local overviewRequested = false
+local pointerInside = false
+local suppressHover = overviewOpen
 
 noctalia.setUpdateInterval(1500)
+barWidget.setTooltip(noctalia.tr("widget.tooltip"))
 noctalia.state.watch("preview_open", function(value)
   if value == false then hoverOpen = false end
 end)
+noctalia.state.watch("overview_open", function(value)
+  overviewOpen = value == true
+  if overviewOpen then
+    suppressHover = true
+  else
+    overviewRequested = false
+    if not pointerInside then suppressHover = false end
+  end
+end)
+
+local function currentOutput()
+  local name = barWidget.outputName()
+  if type(name) == "string" and name ~= "" then return name end
+  return noctalia.focusedOutputName()
+end
 
 local function render()
-  local rows = noctalia.getConfig("rows") or 2
   local columns = noctalia.getConfig("columns") or 5
-  local count = rows * columns
-  local start = math.floor((math.max(active, 1) - 1) / count) * count + 1
   local children = {}
-  for i = 0, count - 1 do
-    local id = start + i
-    if not barWidget.isVertical() or i < columns then
-      local occupied = windows[id] and windows[id] > 0
-      local selected = id == active
-      table.insert(children, ui.row({
-        key = "ws-" .. id,
-        gap = 3, paddingH = 6, paddingV = 3, radius = 6,
-        align = "center",
-        fill = selected and "primary/0.2" or "surface_variant/0.35",
-        border = selected and "primary/0.55" or "outline/0.15",
-        borderWidth = 1,
-      }, {
-        ui.label({
-          text = tostring(id),
-          color = selected and "primary" or "on_surface_variant",
-          fontWeight = selected and "bold" or "medium", fontSize = 11,
-        }),
-        ui.label({ text = occupied and "•" or "", fontSize = 10,
-          color = selected and "primary" or "secondary" }),
-      }))
+  local ids = {}
+  local output = currentOutput()
+  local showSpecial = noctalia.getConfig("show_special") == true
+  local showEmpty = noctalia.getConfig("show_empty_bar") == true
+  for _, ws in ipairs(workspaces) do
+    local id = tonumber(ws.id)
+    local special = (id and id < 0) or (type(ws.name) == "string" and string.sub(ws.name, 1, 8) == "special:")
+    local onOutput = output ~= nil and (ws.monitor == output
+      or monitorNames[tonumber(ws.monitorID)] == output)
+    if onOutput and id then
+      if special and showSpecial then
+        ids[#ids + 1] = id
+      elseif not special and (showEmpty or (tonumber(ws.windows) or 0) > 0 or id == active) then
+        ids[#ids + 1] = id
+      end
     end
   end
+  table.sort(ids, function(a, b)
+    if (a < 0) ~= (b < 0) then return a >= 0 end
+    return a < b
+  end)
+  displayedIds = ids
+  for _, id in ipairs(ids) do
+    local occupied = windows[id] and windows[id] > 0
+    local selected = id == active
+
+    -- Match the built-in unlabeled pill style: the active slot is 2.5x wider.
+    table.insert(children, ui.box({
+      key = "ws-" .. id,
+      width = selected and 40 or 16,
+      height = 16,
+      radius = 8,
+      fill = selected and "primary" or (occupied and "secondary" or "on_surface_variant/0.35"),
+    }))
+  end
   if barWidget.isVertical() then
-    barWidget.render(ui.column({ gap = 3, padding = 4, align = "center" }, children))
+    local columnsChildren = {}
+    for row = 0, math.ceil(#children / columns) - 1 do
+      local rowChildren = {}
+      for column = 0, columns - 1 do
+        local child = children[row * columns + column + 1]
+        if child then table.insert(rowChildren, child) end
+      end
+      table.insert(columnsChildren, ui.row({ gap = 4, align = "center" }, rowChildren))
+    end
+    barWidget.render(ui.column({ gap = 4, padding = 4, align = "center", radius = 999,
+      fill = "on_primary" }, columnsChildren))
   else
-    barWidget.render(ui.row({ gap = 4, paddingH = 6, align = "center" }, children))
+    barWidget.render(ui.row({ gap = 4, padding = 4, align = "center", radius = 999,
+      fill = "on_primary" }, children))
   end
 end
 
 function update()
   if busy then return end
   busy = true
-  local accepted = noctalia.runAsync({ "hyprctl", "monitors", "-j" }, function(result)
+  local accepted = noctalia.runAsync({ "hyprctl", "-j", "monitors" }, function(result)
     if result.exitCode == 0 then
       local monitors = noctalia.json.decode(result.stdout) or {}
-      local name = barWidget.outputName()
+      local name = currentOutput()
+      local nextMonitorNames = {}
       for _, monitor in ipairs(monitors) do
-        if name == nil or monitor.name == name then
-          active = (monitor.activeWorkspace and monitor.activeWorkspace.id) or active
-          break
+        if monitor.id ~= nil then nextMonitorNames[tonumber(monitor.id)] = monitor.name end
+        if name ~= nil and monitor.name == name then
+          active = tonumber(monitor.activeWorkspace and monitor.activeWorkspace.id) or active
         end
       end
+      monitorNames = nextMonitorNames
     end
     busy = false
     render()
   end)
   if not accepted then busy = false end
-  noctalia.runAsync({ "hyprctl", "workspaces", "-j" }, function(result)
+  noctalia.runAsync({ "hyprctl", "-j", "workspaces" }, function(result)
     if result.exitCode ~= 0 then return end
     local list = noctalia.json.decode(result.stdout) or {}
     local nextWindows = {}
     for _, workspace in ipairs(list) do
       nextWindows[workspace.id] = workspace.windows or 0
     end
+    workspaces = list
     windows = nextWindows
     render()
   end)
 end
 
 function onHover(entered)
-  if not noctalia.getConfig("show_hover_preview") then return end
-  if entered and not hoverOpen then
-    noctalia.state.set("hover_output", barWidget.outputName() or "")
+  pointerInside = entered == true
+  if not pointerInside then
+    if hoverOpen then
+      hoverOpen = false
+      noctalia.togglePanel(PREVIEW)
+    end
+    if not overviewOpen and not overviewRequested then suppressHover = false end
+    return
+  end
+  if suppressHover or overviewOpen or overviewRequested or not noctalia.getConfig("show_hover_preview") then return end
+  if not hoverOpen then
+    noctalia.state.set("hover_output", currentOutput() or "")
     hoverOpen = true
-    noctalia.togglePanel(PREVIEW)
-  elseif not entered and hoverOpen then
-    hoverOpen = false
     noctalia.togglePanel(PREVIEW)
   end
 end
 
 function onClick()
+  overviewRequested = true
+  suppressHover = true
   if hoverOpen then
     hoverOpen = false
     noctalia.togglePanel(PREVIEW)
   end
-  noctalia.state.set("overview_output", barWidget.outputName() or "")
+  noctalia.state.set("overview_output", currentOutput() or "")
   noctalia.togglePanel(OVERVIEW)
 end
 
@@ -104,14 +158,36 @@ function onRightClick()
 end
 
 function onScroll(axis, steps)
-  if axis ~= "vertical" or steps == 0 then return end
-  local target = math.max(1, active + (steps < 0 and 1 or -1))
-  hypr.dispatch("workspace", tostring(target))
+  if axis ~= "vertical" or steps == 0 or #displayedIds == 0 then return end
+  local index = nil
+  for position, id in ipairs(displayedIds) do
+    if id == active then index = position; break end
+  end
+  local direction = steps < 0 and 1 or -1
+  if index == nil then index = direction > 0 and #displayedIds or 1 end
+  local targetIndex = ((index - 1 + direction + #displayedIds) % #displayedIds) + 1
+  local target = displayedIds[targetIndex]
+  if target < 0 then
+    for _, ws in ipairs(workspaces) do
+      if tonumber(ws.id) == target then
+        hypr.dispatch("togglespecialworkspace", string.gsub(tostring(ws.name or "special"), "^special:", ""))
+        return
+      end
+    end
+  else
+    hypr.dispatch("workspace", tostring(target))
+  end
 end
 
 function onIpc(event)
   if event == "toggle" or event == "open" then
-    noctalia.state.set("overview_output", "")
+    overviewRequested = true
+    suppressHover = true
+    if hoverOpen then
+      hoverOpen = false
+      noctalia.togglePanel(PREVIEW)
+    end
+    noctalia.state.set("overview_output", currentOutput() or "")
     noctalia.togglePanel(OVERVIEW)
   elseif event == "preview" then
     noctalia.togglePanel(PREVIEW)

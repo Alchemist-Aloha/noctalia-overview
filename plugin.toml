@@ -32,6 +32,12 @@ label_key = "settings.show_empty"
 default = true
 
 [[setting]]
+key = "show_empty_bar"
+type = "bool"
+label_key = "settings.show_empty_bar"
+default = false
+
+[[setting]]
 key = "show_special"
 type = "bool"
 label_key = "settings.show_special"
