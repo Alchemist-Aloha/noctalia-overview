@@ -34,4 +34,4 @@ This v5 native panel cannot reproduce the v4 QML overlay's exact window geometry
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT
