@@ -32,12 +32,6 @@ label_key = "settings.show_empty"
 default = true
 
 [[setting]]
-key = "show_empty_bar"
-type = "bool"
-label_key = "settings.show_empty_bar"
-default = false
-
-[[setting]]
 key = "show_special"
 type = "bool"
 label_key = "settings.show_special"
@@ -76,10 +70,60 @@ id = "toggle"
 entry = "shortcut.luau"
 
 [[panel]]
+id = "overview"
+entry = "overview.luau"
+width = 840
+height = 475
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+
+[[panel]]
+id = "overview-375"
+entry = "overview.luau"
+width = 840
+height = 375
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+
+[[panel]]
+id = "overview-320"
+entry = "overview.luau"
+width = 840
+height = 320
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+
+[[panel]]
+id = "overview-265"
+entry = "overview.luau"
+width = 840
+height = 265
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+
+[[panel]]
+id = "overview-220"
+entry = "overview.luau"
+width = 840
+height = 220
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+
+[[panel]]
 id = "preview"
 entry = "preview.luau"
-width = 1200
-height = 440
+width = 840
+height = 475
 placement = "attached"
 position = "auto"
 open_near_click = true
@@ -87,11 +131,45 @@ keyboard_focus = "none"
 dismiss_on_outside_click = false
 
 [[panel]]
-id = "overview"
-entry = "overview.luau"
-width = 1200
-height = 440
-placement = "floating"
-position = "center"
-keyboard_focus = "exclusive"
-capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+id = "preview-375"
+entry = "preview.luau"
+width = 840
+height = 375
+placement = "attached"
+position = "auto"
+open_near_click = true
+keyboard_focus = "none"
+dismiss_on_outside_click = false
+
+[[panel]]
+id = "preview-320"
+entry = "preview.luau"
+width = 840
+height = 320
+placement = "attached"
+position = "auto"
+open_near_click = true
+keyboard_focus = "none"
+dismiss_on_outside_click = false
+
+[[panel]]
+id = "preview-265"
+entry = "preview.luau"
+width = 840
+height = 265
+placement = "attached"
+position = "auto"
+open_near_click = true
+keyboard_focus = "none"
+dismiss_on_outside_click = false
+
+[[panel]]
+id = "preview-220"
+entry = "preview.luau"
+width = 840
+height = 220
+placement = "attached"
+position = "auto"
+open_near_click = true
+keyboard_focus = "none"
+dismiss_on_outside_click = false

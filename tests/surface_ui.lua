@@ -29,7 +29,9 @@ local config = { rows = 2, columns = 5, show_empty = true, show_special = false,
   max_captures = 20, capture_interval_ms = 1200 }
 local rendered
 local captured = {}
-local hypr = {
+-- Reuse the real (pure) layout helpers so the test exercises the shared math.
+local realHypr = assert(loadfile("lib/hypr.luau", "t", setmetatable({}, { __index = _G })))()
+local hypr = setmetatable({
   fetch = function(callback) callback({ monitors = { {} }, clients = {}, workspaces = {} }) end,
   visible = function() return visible end,
   dispatch = function() end,
@@ -44,7 +46,7 @@ local hypr = {
       clear = function() captured = {} end,
     }
   end,
-}
+}, { __index = realHypr })
 
 local env = setmetatable({
   ui = ui,
@@ -53,7 +55,7 @@ local env = setmetatable({
     getConfig = function(key) return config[key] end,
     tr = function(key) return key end,
     appIconPath = function() return nil end,
-    state = { get = function() return "" end },
+    state = { get = function() return "" end, set = function() end },
     setUpdateInterval = function() end,
   },
   panel = { render = function(tree) rendered = tree end, close = function() end },
@@ -86,7 +88,7 @@ surface:key("Escape", true)
 local preview = assert(loadfile("lib/surface.luau", "t", env))().new(true)
 preview:open("")
 assert(#rendered.children[2].children == 2, "hover preview should reflow to five cards per row")
-assert(rendered.children[2].children[1].children[1].props.height == 154, "preview cards should match the overview card size")
+assert(rendered.children[2].children[1].children[1].props.height == 116, "preview cards should be 30% smaller than the overview")
 
 -- Fewer workspaces than configured columns should widen the cards to fill the row.
 visible = { visible[1], visible[2] }

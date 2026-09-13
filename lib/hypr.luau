@@ -63,6 +63,169 @@ local function report(callback, ...)
     end
 end
 
+-- Workspace-card grid metrics. The panel renderer and the bar widget both use
+-- these so the widget can pick a panel variant that fits before it opens.
+-- 784/389 = the previous overview grid scaled by 0.7, so the click panel now
+-- matches the hover preview layout.
+local LAYOUT = {
+    gridWidth = 784,
+    gridGap = 6,
+    maxCardWidth = 389,
+    cardPad = 6,
+    cardGap = 4,
+    minThumbHeight = 52,
+    maxThumbHeight = 300,
+    headingHeight = 22,
+    maxTiles = 9,
+    bodyPad = 8,
+    -- Conservative chrome estimates: the rendered header/footer rows are a few
+    -- pixels taller than the raw font sizes, which would otherwise make the
+    -- grid overflow and show a scroll bar.
+    headerHeight = 40,
+    scrollGap = 8,
+    footerHeight = 32,
+    minContentHeight = 180,
+    -- Slack left when growing the cards to fill a panel bucket, covering the
+    -- difference between the estimated chrome and the rendered header/footer.
+    fillInset = 16,
+}
+
+Hypr.LAYOUT = LAYOUT
+
+-- Panel size buckets (manifest heights, +10% vertical room). The widget picks
+-- the smallest bucket that fits the computed content so the window hugs the
+-- workspace previews without clipping them.
+Hypr.PANEL_BUCKETS = { 220, 265, 320, 375, 475 }
+Hypr.BASE_PANEL_HEIGHT = 475
+
+-- Bounding box of { x, y, w, h } rectangles; nil when the list is empty.
+function Hypr.bboxOf(items)
+    local minX, minY, maxX, maxY
+    for _, item in ipairs(items) do
+        local x1, y1 = item.x, item.y
+        local x2, y2 = x1 + item.w, y1 + item.h
+        minX = minX == nil and x1 or math.min(minX, x1)
+        minY = minY == nil and y1 or math.min(minY, y1)
+        maxX = maxX == nil and x2 or math.max(maxX, x2)
+        maxY = maxY == nil and y2 or math.max(maxY, y2)
+    end
+    return minX, minY, maxX, maxY
+end
+
+-- Window geometry for one workspace, trimmed to the tiles the card can show.
+function Hypr.windowItems(record)
+    local items = {}
+    for _, client in ipairs(record.clients or {}) do
+        local at = client.at or { 0, 0 }
+        local size = client.size or { 1280, 720 }
+        items[#items + 1] = {
+            client = client,
+            x = tonumber(at[1]) or 0,
+            y = tonumber(at[2]) or 0,
+            w = math.max(1, tonumber(size[1]) or 1280),
+            h = math.max(1, tonumber(size[2]) or 720),
+        }
+    end
+    if #items > LAYOUT.maxTiles then
+        table.sort(items, function(a, b) return a.w * a.h > b.w * b.h end)
+        for index = #items, LAYOUT.maxTiles + 1, -1 do items[index] = nil end
+    end
+    return items
+end
+
+-- Thumbnail area height for a workspace, scaled from its window bounding box.
+function Hypr.thumbHeight(record, interiorWidth)
+    local items = Hypr.windowItems(record)
+    local minX, minY, maxX, maxY = Hypr.bboxOf(items)
+    if minX == nil then
+        return nil
+    end
+    local boxWidth = math.max(1, maxX - minX)
+    local boxHeight = math.max(1, maxY - minY)
+    local height = math.floor(interiorWidth * boxHeight / boxWidth)
+    return math.max(LAYOUT.minThumbHeight, math.min(LAYOUT.maxThumbHeight, height))
+end
+
+-- Grid metrics for a set of visible workspace records: column count, card
+-- width, per-card thumbnail heights and the content height needed to host
+-- everything without scrolling.
+function Hypr.panelLayout(visible, configuredColumns, preview, targetContent)
+    visible = visible or {}
+    local count = #visible
+    local columns = math.min(math.max(1, numberOr(configuredColumns, 5)), math.max(1, count))
+    local available = math.max(16, LAYOUT.gridWidth - LAYOUT.gridGap * (columns - 1))
+    local cardWidth = math.min(LAYOUT.maxCardWidth, math.floor(available / columns))
+    local interiorWidth = math.max(24, cardWidth - LAYOUT.cardPad * 2)
+    local cards = {}
+    local maxCardHeight = 0
+    for index, record in ipairs(visible) do
+        local thumb = Hypr.thumbHeight(record, interiorWidth)
+        local extra = #(record.clients or {}) > LAYOUT.maxTiles
+        if thumb == nil then thumb = 16 end
+        if extra then thumb = thumb + 16 end
+        local children = extra and 3 or 2
+        local cardHeight = LAYOUT.cardPad * 2 + LAYOUT.headingHeight + thumb + LAYOUT.cardGap * (children - 1)
+        cards[index] = {
+            thumbHeight = thumb - (extra and 16 or 0),
+            extra = extra,
+        }
+        if cardHeight > maxCardHeight then maxCardHeight = cardHeight end
+    end
+    local rows = math.ceil(math.max(1, count) / columns)
+    local gridHeight = count > 0 and (rows * maxCardHeight + (rows - 1) * LAYOUT.gridGap) or 0
+    local footer = preview and 0 or LAYOUT.footerHeight
+    local contentHeight = LAYOUT.bodyPad * 2 + LAYOUT.headerHeight + gridHeight
+        + (gridHeight > 0 and LAYOUT.scrollGap or 0)
+        + (footer > 0 and (LAYOUT.scrollGap + footer) or 0)
+    -- `targetContent` is the panel bucket the widget selected. Grow the
+    -- thumbnail area (not the bottom margin) to fill that height so the
+    -- previews use the whole window.
+    if targetContent and targetContent > contentHeight and count > 0 then
+        local extra = targetContent - contentHeight - LAYOUT.fillInset
+        if extra > 0 then
+            local extraPerRow = extra / rows
+            for _, card in ipairs(cards) do
+                card.thumbHeight = card.thumbHeight + extraPerRow
+            end
+        end
+        contentHeight = targetContent
+    end
+    return {
+        columns = columns,
+        cardWidth = cardWidth,
+        rows = rows,
+        cards = cards,
+        contentHeight = math.max(LAYOUT.minContentHeight, contentHeight),
+    }
+end
+
+-- Smallest panel bucket that can host the given content height.
+function Hypr.pickBucket(contentHeight)
+    for _, bucket in ipairs(Hypr.PANEL_BUCKETS) do
+        if contentHeight <= bucket - 24 then
+            return bucket
+        end
+    end
+    return Hypr.PANEL_BUCKETS[#Hypr.PANEL_BUCKETS]
+end
+
+-- Visible workspaces on one output plus the panel bucket that fits them and
+-- the content height the bucket provides.
+function Hypr.pickPanel(snapshot, output, rows, columns, showEmpty, showSpecial, preview)
+    local visible = Hypr.visible(snapshot, output, rows, columns, showEmpty, showSpecial, 0)
+    local metrics = Hypr.panelLayout(visible, columns, preview)
+    local bucket = Hypr.pickBucket(metrics.contentHeight)
+    return bucket, bucket - 24
+end
+
+-- Map a bucket to a panel entry id; the largest bucket uses the base id.
+function Hypr.bucketId(base, bucket)
+    if bucket == Hypr.BASE_PANEL_HEIGHT then
+        return base
+    end
+    return base .. "-" .. tostring(bucket)
+end
+
 -- Run `hyprctl -j ...` and decode its stdout asynchronously.
 -- callback(data, error, commandResult) is called exactly once when accepted.
 function Hypr.queryJson(args, callback, timeoutMs)

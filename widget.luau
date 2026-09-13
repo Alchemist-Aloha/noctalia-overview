@@ -2,13 +2,10 @@
 local PREVIEW = "alchemistaloha/noctalia-overview:preview"
 local OVERVIEW = "alchemistaloha/noctalia-overview:overview"
 local hypr = require("./lib/hypr.luau")
-local active = 1
-local activeOutput = nil
-local windows = {}
-local workspaces = {}
-local displayedIds = {}
-local monitorNames = {}
 local busy = false
+local snapshot = nil
+local previewPanel = nil
+local overviewPanel = nil
 local hoverOpen = noctalia.state.get("preview_open") == true
 local overviewOpen = noctalia.state.get("overview_open") == true
 local overviewRequested = false
@@ -36,117 +33,61 @@ local function currentOutput()
   return noctalia.focusedOutputName()
 end
 
-local function render(output)
-  -- `output` is captured during the synchronous timer/input context because
-  -- barWidget.outputName() returns nil inside runAsync callbacks.
-  output = output or currentOutput()
+-- Choose the panel variant that fits the workspaces on this monitor, using the
+-- same metrics the panel renderer uses.
+local function pickPanel(base, wantPreview)
+  local snap = snapshot
+  if snap == nil then return base end
   local columns = noctalia.getConfig("columns") or 5
-  local children = {}
-  local ids = {}
-  local seen = {}
-  local otherOutputIds = {}
-  local showSpecial = noctalia.getConfig("show_special") == true
-  local showExtraEmpty = noctalia.getConfig("show_empty_bar") == true
-  local anchor = active > 0 and output == activeOutput and active or nil
-  local function add(id)
-    if not seen[id] then ids[#ids + 1] = id; seen[id] = true end
-  end
-  for _, ws in ipairs(workspaces) do
-    local id = tonumber(ws.id)
-    local special = (id and id < 0) or (type(ws.name) == "string" and string.sub(ws.name, 1, 8) == "special:")
-    local monitor = ws.monitor
-    if type(monitor) == "number" then monitor = monitorNames[monitor] end
-    if monitor == nil or monitor == "" then monitor = monitorNames[tonumber(ws.monitorID)] end
-    local onOutput = output ~= nil and monitor == output
-    if id and monitor and output and monitor ~= output then otherOutputIds[id] = true end
-    if onOutput and id then
-      if special and showSpecial then
-        add(id)
-      elseif not special then
-        if not anchor then anchor = id end
-        if showExtraEmpty or (tonumber(ws.windows) or 0) > 0 or id == active then add(id) end
-      end
-    end
-  end
-  -- Hyprland lists created workspaces, not the inactive slots shown by the
-  -- native bar. Keep one compact row of slots around this monitor's active ID.
-  if output and anchor and anchor > 0 then
-    local first = math.floor((anchor - 1) / columns) * columns + 1
-    for id = first, first + columns - 1 do
-      if not otherOutputIds[id] or (id == active and output == activeOutput) then add(id) end
-    end
-  end
-  table.sort(ids, function(a, b)
-    if (a < 0) ~= (b < 0) then return a >= 0 end
-    return a < b
-  end)
-  displayedIds = ids
-  for _, id in ipairs(ids) do
-    local occupied = windows[id] and windows[id] > 0
-    local selected = id == active
+  local bucket, content = hypr.pickPanel(snap, currentOutput(), noctalia.getConfig("rows") or 2, columns,
+    noctalia.getConfig("show_empty"), noctalia.getConfig("show_special"), wantPreview)
+  noctalia.state.set(wantPreview and "preview_content" or "overview_content", content)
+  return hypr.bucketId(base, bucket)
+end
 
-    -- Match the built-in unlabeled pill style: the active slot is 2.5x wider.
-    table.insert(children, ui.box({
-      key = "ws-" .. id,
-      width = selected and 40 or 16,
-      height = 16,
-      radius = 8,
-      fill = selected and "primary" or (occupied and "secondary" or "on_surface_variant/0.35"),
-    }))
-  end
-  if barWidget.isVertical() then
-    local columnsChildren = {}
-    for row = 0, math.ceil(#children / columns) - 1 do
-      local rowChildren = {}
-      for column = 0, columns - 1 do
-        local child = children[row * columns + column + 1]
-        if child then table.insert(rowChildren, child) end
-      end
-      table.insert(columnsChildren, ui.row({ gap = 4, align = "center" }, rowChildren))
-    end
-    barWidget.render(ui.column({ gap = 4, padding = 4, align = "center", radius = 999,
-      fill = "on_primary" }, columnsChildren))
-  else
-    barWidget.render(ui.row({ gap = 4, padding = 4, align = "center", radius = 999,
-      fill = "on_primary" }, children))
-  end
+local function render()
+  barWidget.render(ui.row({ gap = 5, paddingH = 3, align = "center" }, {
+    ui.glyph({ name = "layout-dashboard", size = 16, color = "on_surface" }),
+  }))
 end
 
 function update()
   if busy then return end
-  local output = currentOutput()
   busy = true
-  local accepted = noctalia.runAsync({ "hyprctl", "-j", "monitors" }, function(result)
-    if result.exitCode == 0 then
-      local monitors = noctalia.json.decode(result.stdout) or {}
-      local name = output
-      local nextMonitorNames = {}
-      activeOutput = nil
-      for _, monitor in ipairs(monitors) do
-        if monitor.id ~= nil then nextMonitorNames[tonumber(monitor.id)] = monitor.name end
-        if name ~= nil and monitor.name == name then
-          active = tonumber(monitor.activeWorkspace and monitor.activeWorkspace.id) or active
-          activeOutput = name
-        end
-      end
-      monitorNames = nextMonitorNames
-    end
+  hypr.fetch(function(result)
     busy = false
-    render(output)
+    snapshot = result
   end)
-  if not accepted then busy = false end
-  noctalia.runAsync({ "hyprctl", "-j", "workspaces" }, function(result)
-    if result.exitCode ~= 0 then return end
-    local list = noctalia.json.decode(result.stdout) or {}
-    local nextWindows = {}
-    for _, workspace in ipairs(list) do
-      local id = tonumber(workspace.id)
-      if id then nextWindows[id] = tonumber(workspace.windows) or 0 end
-    end
-    workspaces = list
-    windows = nextWindows
-    render(output)
-  end)
+end
+
+local function closePanel(localId, stateKey)
+  local id = localId
+  if type(id) ~= "string" or id == "" then
+    local stored = noctalia.state.get(stateKey)
+    if type(stored) == "string" and stored ~= "" then id = stored end
+  end
+  if type(id) == "string" and id ~= "" then
+    noctalia.togglePanel(id)
+  end
+  noctalia.state.set(stateKey, "")
+  return nil
+end
+
+local function openPreviewPanel()
+  noctalia.state.set("hover_output", currentOutput() or "")
+  local id = pickPanel(PREVIEW, true)
+  noctalia.state.set("preview_panel", id)
+  hoverOpen = true
+  noctalia.togglePanel(id)
+end
+
+local function openOverviewPanel()
+  noctalia.state.set("overview_output", currentOutput() or "")
+  local id = pickPanel(OVERVIEW, false)
+  noctalia.state.set("overview_panel", id)
+  overviewRequested = true
+  suppressHover = true
+  noctalia.togglePanel(id)
 end
 
 function onHover(entered)
@@ -154,68 +95,50 @@ function onHover(entered)
   if not pointerInside then
     if hoverOpen then
       hoverOpen = false
-      noctalia.togglePanel(PREVIEW)
+      previewPanel = closePanel(previewPanel, "preview_panel")
     end
     if not overviewOpen and not overviewRequested then suppressHover = false end
     return
   end
   if suppressHover or overviewOpen or overviewRequested or not noctalia.getConfig("show_hover_preview") then return end
   if not hoverOpen then
-    noctalia.state.set("hover_output", currentOutput() or "")
-    hoverOpen = true
-    noctalia.togglePanel(PREVIEW)
+    openPreviewPanel()
   end
 end
 
 function onClick()
-  overviewRequested = true
-  suppressHover = true
+  if overviewOpen then
+    overviewPanel = closePanel(overviewPanel, "overview_panel")
+    return
+  end
   if hoverOpen then
     hoverOpen = false
-    noctalia.togglePanel(PREVIEW)
+    previewPanel = closePanel(previewPanel, "preview_panel")
   end
-  noctalia.state.set("overview_output", currentOutput() or "")
-  noctalia.togglePanel(OVERVIEW)
+  openOverviewPanel()
 end
 
 function onRightClick()
   noctalia.openSettings()
 end
 
-function onScroll(axis, steps)
-  if axis ~= "vertical" or steps == 0 or #displayedIds == 0 then return end
-  local index = nil
-  for position, id in ipairs(displayedIds) do
-    if id == active then index = position; break end
-  end
-  local direction = steps < 0 and 1 or -1
-  if index == nil then index = direction > 0 and #displayedIds or 1 end
-  local targetIndex = ((index - 1 + direction + #displayedIds) % #displayedIds) + 1
-  local target = displayedIds[targetIndex]
-  if target < 0 then
-    for _, ws in ipairs(workspaces) do
-      if tonumber(ws.id) == target then
-        hypr.dispatch("togglespecialworkspace", string.gsub(tostring(ws.name or "special"), "^special:", ""))
-        return
-      end
-    end
-  else
-    hypr.dispatch("workspace", tostring(target))
-  end
-end
-
 function onIpc(event)
   if event == "toggle" or event == "open" then
-    overviewRequested = true
-    suppressHover = true
+    if overviewOpen then
+      overviewPanel = closePanel(overviewPanel, "overview_panel")
+      return
+    end
     if hoverOpen then
       hoverOpen = false
-      noctalia.togglePanel(PREVIEW)
+      previewPanel = closePanel(previewPanel, "preview_panel")
     end
-    noctalia.state.set("overview_output", currentOutput() or "")
-    noctalia.togglePanel(OVERVIEW)
+    openOverviewPanel()
   elseif event == "preview" then
-    noctalia.togglePanel(PREVIEW)
+    if noctalia.state.get("preview_open") == true then
+      previewPanel = closePanel(previewPanel, "preview_panel")
+    else
+      openPreviewPanel()
+    end
   end
 end
 

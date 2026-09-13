@@ -10,15 +10,7 @@ end
 
 -- Bounding box of a set of window rectangles ({ x, y, w, h }).
 local function bboxOf(items)
-  local minX, minY, maxX, maxY
-  for _, item in ipairs(items) do
-    local x1, y1 = item.x, item.y
-    local x2, y2 = x1 + item.w, y1 + item.h
-    minX = minX == nil and x1 or math.min(minX, x1)
-    minY = minY == nil and y1 or math.min(minY, y1)
-    maxX = maxX == nil and x2 or math.max(maxX, x2)
-    maxY = maxY == nil and y2 or math.max(maxY, y2)
-  end
+  local minX, minY, maxX, maxY = hypr.bboxOf(items)
   return minX or 0, minY or 0, maxX or 0, maxY or 0
 end
 
@@ -131,7 +123,7 @@ function M.new(preview)
         path = image,
         width = width,
         height = height,
-        fit = "contain",
+        fit = "stretch",
         radius = 3,
       }))
     else
@@ -239,7 +231,7 @@ function M.new(preview)
     })
   end
 
-  local function workspaceCard(ws, index, width)
+  local function workspaceCard(ws, index, width, metrics)
     local targetWorkspace = ws.special and tostring(ws.name or "special") or tostring(ws.id)
     local heading = ui.button({
       key = "switch-" .. tostring(ws.id),
@@ -258,48 +250,25 @@ function M.new(preview)
       table.insert(headingRow, ui.label({ text = short(ws.monitor, 14), fontSize = 9, color = "on_surface_variant" }))
     end
     local children = { ui.row({ align = "center", gap = 4 }, headingRow) }
-    local clients = ws.clients or {}
     -- Arrange every window by its real geometry so the card mirrors the
     -- workspace tiling (side-by-side, stacked, master/stack, ...).
-    local pad = 6
-    local cardGap = 4
-    local items = {}
-    local maxTiles = 9
-    local extra = 0
-    for _, client in ipairs(clients) do
-      local at = client.at or { 0, 0 }
-      local size = client.size or { 1280, 720 }
-      items[#items + 1] = {
-        client = client,
-        x = tonumber(at[1]) or 0,
-        y = tonumber(at[2]) or 0,
-        w = math.max(1, tonumber(size[1]) or 1280),
-        h = math.max(1, tonumber(size[2]) or 720),
-      }
-    end
-    if #items > maxTiles then
-      table.sort(items, function(a, b) return a.w * a.h > b.w * b.h end)
-      extra = #items - maxTiles
-      for index2 = #items, maxTiles + 1, -1 do items[index2] = nil end
-    end
+    local pad = hypr.LAYOUT.cardPad
+    local cardGap = hypr.LAYOUT.cardGap
+    local items = hypr.windowItems(ws)
+    local thumbHeight = metrics and metrics.thumbHeight or 16
+    local extra = metrics and metrics.extra or (#(ws.clients or {}) > hypr.LAYOUT.maxTiles)
     local interiorWidth = math.max(24, width - pad * 2)
-    local thumbHeight = 16
     if #items > 0 then
-      local minX, minY, maxX, maxY = bboxOf(items)
-      local boxWidth = math.max(1, maxX - minX)
-      local boxHeight = math.max(1, maxY - minY)
-      thumbHeight = math.floor(interiorWidth * boxHeight / boxWidth)
-      thumbHeight = math.max(52, math.min(thumbHeight, 300))
       table.insert(children, buildLayout(items, interiorWidth, thumbHeight, 0))
     else
       table.insert(children, ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }))
     end
-    if extra > 0 then
-      table.insert(children, ui.label({ text = "+" .. tostring(extra), fontSize = 10, color = "secondary" }))
+    if extra then
+      table.insert(children, ui.label({ text = "+" .. tostring(#(ws.clients or {}) - hypr.LAYOUT.maxTiles), fontSize = 10, color = "secondary" }))
       thumbHeight = thumbHeight + 16
     end
     -- No fixed minimum: the card is exactly as tall as its contents.
-    local cardHeight = pad * 2 + 22 + thumbHeight + cardGap * (#children - 1)
+    local cardHeight = pad * 2 + hypr.LAYOUT.headingHeight + thumbHeight + cardGap * (#children - 1)
     if preview then
       return ui.column({
         key = "workspace-" .. tostring(ws.id), width = width, height = cardHeight,
@@ -327,30 +296,23 @@ function M.new(preview)
   render = function()
     if not self.opened then return end
     local configuredColumns = noctalia.getConfig("columns") or 5
-    -- Size the cards to the workspaces actually shown, so a monitor with two
-    -- or three workspaces gets large thumbnails that fill the row instead of
-    -- a fixed five-column grid with empty edges.
-    local columns = math.min(configuredColumns, math.max(1, #self.visible))
-    local gridWidth = 1120
-    local gridGap = 6
-    local maxCardWidth = 556
-    local cardWidth = math.min(maxCardWidth, math.floor((gridWidth - gridGap * (columns - 1)) / columns))
+    -- The widget sizes the panel from the same metrics so the window hugs the
+    -- workspace previews.
+    local metrics = hypr.panelLayout(self.visible, configuredColumns, preview, self.targetContent)
+    local columns = metrics.columns
+    local gridGap = hypr.LAYOUT.gridGap
     local grid = {}
-    local maxCardHeight = 0
-    local gridRows = 0
-    for row = 1, math.ceil(#self.visible / columns) do
+    for row = 1, metrics.rows do
       local cards = {}
       for column = 1, columns do
         local index = (row - 1) * columns + column
         local ws = self.visible[index]
         if ws then
-          local card, cardHeight = workspaceCard(ws, index, cardWidth)
+          local card = workspaceCard(ws, index, metrics.cardWidth, metrics.cards[index])
           table.insert(cards, card)
-          if cardHeight > maxCardHeight then maxCardHeight = cardHeight end
         end
       end
       if #cards > 0 then
-        gridRows = gridRows + 1
         table.insert(grid, ui.row({ key = "row-" .. row, gap = gridGap, align = "start", justify = "center" }, cards))
       end
     end
@@ -370,30 +332,29 @@ function M.new(preview)
       ui.button({ glyph = "close", controlSize = "sm", tooltip = noctalia.tr("panel.close"), onClick = function() panel.close() end }),
     })
     local content = { header, ui.scroll({ key = "workspace-grid", flexGrow = 1, gap = gridGap }, grid) }
-    if not preview and self.selectedWindow then
-      table.insert(content, ui.row({ gap = 8 }, {
-        ui.button({ text = noctalia.tr("panel.focus"), glyph = "focus", onClick = function()
-          hypr.dispatch("focuswindow", "address:" .. self.selectedWindow)
-          panel.close()
-        end }),
-        ui.button({ text = noctalia.tr("panel.float"), glyph = "square", onClick = function()
-          hypr.dispatch("togglefloating", "address:" .. self.selectedWindow)
-          self:update()
-        end }),
-      }))
+    if not preview then
+      -- Reserve the same footer height in both states so the widget's
+      -- predicted content height stays valid when a window gets selected.
+      if self.selectedWindow then
+        table.insert(content, ui.row({ gap = 8 }, {
+          ui.button({ text = noctalia.tr("panel.focus"), glyph = "focus", onClick = function()
+            hypr.dispatch("focuswindow", "address:" .. self.selectedWindow)
+            panel.close()
+          end }),
+          ui.button({ text = noctalia.tr("panel.float"), glyph = "square", onClick = function()
+            hypr.dispatch("togglefloating", "address:" .. self.selectedWindow)
+            self:update()
+          end }),
+        }))
+      else
+        table.insert(content, ui.row({ align = "center" }, {
+          ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }),
+        }))
+      end
     end
-    if not preview and not self.selectedWindow then
-      table.insert(content, ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }))
-    end
-    -- Size the root to its contents so the grid sits flush under the header;
-    -- taller layouts keep scrolling inside the fixed panel surface.
-    local bodyPad = 8
-    local gridHeight = gridRows > 0 and (gridRows * maxCardHeight + (gridRows - 1) * gridGap) or 0
-    local footerHeight = (not preview and self.selectedWindow) and 36 or (not preview and 14 or 0)
-    local contentHeight = bodyPad * 2 + 34 + gridHeight + (gridHeight > 0 and 8 or 0)
-      + (footerHeight > 0 and (8 + footerHeight) or 0)
-    contentHeight = math.max(180, math.min(416, contentHeight))
-    panel.render(ui.column({ height = contentHeight, gap = 8, padding = bodyPad }, content))
+    -- The panel surface is a fixed bucket size; rendering the predicted
+    -- content height keeps the grid flush under the header.
+    panel.render(ui.column({ height = metrics.contentHeight, gap = 8, padding = hypr.LAYOUT.bodyPad }, content))
   end
 
   function self:update()
@@ -432,6 +393,9 @@ function M.new(preview)
     self.fetching = false
     self.output = tostring(noctalia.state.get(preview and "hover_output" or "overview_output") or "")
     if context and context ~= "" then self.output = context end
+    self.targetContent = tonumber(noctalia.state.get(preview and "preview_content" or "overview_content")) or nil
+    -- Consume it so a direct `panel-open` cannot reuse a stale height.
+    noctalia.state.set(preview and "preview_content" or "overview_content", "")
     self.page = 0
     self.selected = 1
     self.selectedWindow = nil
