@@ -44,12 +44,6 @@ label_key = "settings.show_special"
 default = false
 
 [[setting]]
-key = "show_titles"
-type = "bool"
-label_key = "settings.show_titles"
-default = true
-
-[[setting]]
 key = "show_hover_preview"
 type = "bool"
 label_key = "settings.show_hover_preview"
@@ -84,8 +78,8 @@ entry = "shortcut.luau"
 [[panel]]
 id = "preview"
 entry = "preview.luau"
-width = 740
-height = 420
+width = 1200
+height = 440
 placement = "attached"
 position = "auto"
 open_near_click = true
@@ -96,7 +90,7 @@ dismiss_on_outside_click = false
 id = "overview"
 entry = "overview.luau"
 width = 1200
-height = 720
+height = 440
 placement = "floating"
 position = "center"
 keyboard_focus = "exclusive"

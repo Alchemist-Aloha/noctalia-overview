@@ -8,7 +8,62 @@ local function short(text, limit)
   return value
 end
 
+-- Bounding box of a set of window rectangles ({ x, y, w, h }).
+local function bboxOf(items)
+  local minX, minY, maxX, maxY
+  for _, item in ipairs(items) do
+    local x1, y1 = item.x, item.y
+    local x2, y2 = x1 + item.w, y1 + item.h
+    minX = minX == nil and x1 or math.min(minX, x1)
+    minY = minY == nil and y1 or math.min(minY, y1)
+    maxX = maxX == nil and x2 or math.max(maxX, x2)
+    maxY = maxY == nil and y2 or math.max(maxY, y2)
+  end
+  return minX or 0, minY or 0, maxX or 0, maxY or 0
+end
+
+-- Find the cleanest way to bisect a tiled layout: the axis and split index
+-- whose two groups do not overlap. Returns nil when nothing separates cleanly
+-- (for example overlapping floating windows).
+local function findSplit(items)
+  local best = nil
+  for _, axis in ipairs({ "x", "y" }) do
+    local sorted = {}
+    for _, item in ipairs(items) do sorted[#sorted + 1] = item end
+    table.sort(sorted, function(a, b)
+      local aMin = axis == "x" and a.x or a.y
+      local bMin = axis == "x" and b.x or b.y
+      if aMin ~= bMin then return aMin < bMin end
+      local aOther = axis == "x" and a.y or a.x
+      local bOther = axis == "x" and b.y or b.x
+      return aOther < bOther
+    end)
+    local ends = {}
+    local running = -math.huge
+    for index, item in ipairs(sorted) do
+      local edge = axis == "x" and (item.x + item.w) or (item.y + item.h)
+      if edge > running then running = edge end
+      ends[index] = running
+    end
+    local starts = {}
+    local runningStart = math.huge
+    for index = #sorted, 1, -1 do
+      local start = axis == "x" and sorted[index].x or sorted[index].y
+      if start < runningStart then runningStart = start end
+      starts[index] = runningStart
+    end
+    for index = 1, #sorted - 1 do
+      local gap = starts[index + 1] - ends[index]
+      if gap >= -1 and (best == nil or gap > best.gap) then
+        best = { axis = axis, index = index, gap = gap, sorted = sorted }
+      end
+    end
+  end
+  return best
+end
+
 function M.new(preview)
+  local tileGap = 3
   local self = {
     preview = preview,
     opened = false,
@@ -63,7 +118,10 @@ function M.new(preview)
     return ui.glyph({ name = "app-window", size = size, color = "on_surface_variant" })
   end
 
-  local function windowNode(client, width, imageHeight)
+  -- One window tile: a live thumbnail that fills its slot in the workspace
+  -- layout. Window titles are exposed as tooltips, not caption strips, so the
+  -- thumbnail gets the whole slot.
+  local function windowTile(client, width, height)
     local address = tostring(client.address or "")
     local image = self.capture:path(client)
     local children = {}
@@ -72,40 +130,26 @@ function M.new(preview)
         key = "image-" .. address,
         path = image,
         width = width,
-        height = imageHeight,
+        height = height,
         fit = "contain",
-        radius = 5,
-        border = "outline/0.25",
-        borderWidth = 1,
+        radius = 3,
       }))
     else
       table.insert(children, ui.row({
-        width = width, height = imageHeight,
-        fill = "surface_variant/0.6", radius = 5,
+        width = width, height = height,
+        fill = "surface_variant/0.6", radius = 3,
         align = "center", justify = "center",
-      }, { clientIcon(client, math.min(24, imageHeight)) }))
-    end
-    if noctalia.getConfig("show_titles") then
-      local caption = { clientIcon(client, 13), ui.label({ text = short(client.title or client.class or address, preview and 14 or 18),
-        maxLines = 1, maxWidth = width - 22, fontSize = 10, flexGrow = 1 }) }
-      local flags = (client.floating and " ◇" or "") .. (((tonumber(client.fullscreen) or 0) ~= 0) and " ⛶" or "") .. (client.urgent and " !" or "")
-      if flags ~= "" then
-        table.insert(caption, ui.label({ text = flags, color = client.urgent and "error" or "secondary", fontSize = 9 }))
-      end
-      table.insert(children, ui.row({ gap = 3, align = "center" }, caption))
-    else
-      table.insert(children, ui.row({ gap = 3, align = "center" }, {
-        clientIcon(client, 13),
-        ui.label({ text = short(client.class or address, 16), fontSize = 10, color = "on_surface_variant" }),
-      }))
+      }, { clientIcon(client, math.max(10, math.min(20, height))) }))
     end
     local body = ui.column({
       key = "window-" .. address,
-      gap = 3,
-      padding = 3,
-      fill = self.selectedWindow == address and "primary/0.18"
-        or (self.hoveredWindow == address and "primary/0.10" or "surface_variant/0.45"),
-      radius = 5,
+      width = width, height = height,
+      gap = 0,
+      radius = 3,
+      fill = self.selectedWindow == address and "primary/0.35" or "surface_variant/0.5",
+      border = self.selectedWindow == address and "primary"
+        or (self.hoveredWindow == address and "primary/0.7" or "outline/0.25"),
+      borderWidth = self.selectedWindow == address and 2 or 1,
       onHover = function(entered)
         local inside = entered == true or entered == "true"
         if not inside and self.hoveredWindow ~= address then return end
@@ -130,9 +174,69 @@ function M.new(preview)
       key = "drag-" .. address,
       dragType = "hypr-window",
       payload = address,
-      tooltip = noctalia.tr("panel.drag"),
+      tooltip = short(client.title or client.class or address, 48),
       previewAncestor = 0,
     }, { body })
+  end
+
+  -- Fallback for overlapping windows (floating/fullscreen): a simple grid.
+  local function gridLayout(items, areaWidth, areaHeight)
+    local count = #items
+    local columns = math.max(1, math.ceil(math.sqrt(count)))
+    local rows = math.ceil(count / columns)
+    local tileWidth = math.max(8, math.floor((areaWidth - tileGap * (columns - 1)) / columns))
+    local tileHeight = math.max(8, math.floor((areaHeight - tileGap * (rows - 1)) / rows))
+    local rowNodes = {}
+    for row = 0, rows - 1 do
+      local tiles = {}
+      for column = 1, columns do
+        local item = items[row * columns + column]
+        if item then table.insert(tiles, windowTile(item.client, tileWidth, tileHeight)) end
+      end
+      if #tiles > 0 then table.insert(rowNodes, ui.row({ gap = tileGap, align = "start" }, tiles)) end
+    end
+    return ui.column({ gap = tileGap, align = "start" }, rowNodes)
+  end
+
+  -- Recursively slice the available area so tiles mirror the real workspace
+  -- tiling, using each window's Hyprland geometry (at/size).
+  local function buildLayout(items, areaWidth, areaHeight, depth)
+    depth = (depth or 0) + 1
+    if #items <= 1 or depth > 10 then
+      if #items == 1 then return windowTile(items[1].client, areaWidth, areaHeight) end
+      return gridLayout(items, areaWidth, areaHeight)
+    end
+    local minX, minY, maxX, maxY = bboxOf(items)
+    local boxWidth, boxHeight = maxX - minX, maxY - minY
+    if boxWidth <= 0 or boxHeight <= 0 then return gridLayout(items, areaWidth, areaHeight) end
+    local split = findSplit(items)
+    if not split then return gridLayout(items, areaWidth, areaHeight) end
+    local groupA, groupB = {}, {}
+    for position, item in ipairs(split.sorted) do
+      if position <= split.index then groupA[#groupA + 1] = item else groupB[#groupB + 1] = item end
+    end
+    if split.axis == "x" then
+      local aMinX, _, aMaxX = bboxOf(groupA)
+      local bMinX = bboxOf(groupB)
+      local boundary = (aMaxX + bMinX) / 2
+      local fraction = math.max(0.08, math.min(0.92, (boundary - minX) / boxWidth))
+      local available = math.max(16, areaWidth - tileGap)
+      local widthA = math.max(8, math.floor(available * fraction))
+      return ui.row({ gap = tileGap, align = "start" }, {
+        buildLayout(groupA, widthA, areaHeight, depth),
+        buildLayout(groupB, available - widthA, areaHeight, depth),
+      })
+    end
+    local _, aMinY, _, aMaxY = bboxOf(groupA)
+    local bMinY = select(2, bboxOf(groupB))
+    local boundary = (aMaxY + bMinY) / 2
+    local fraction = math.max(0.08, math.min(0.92, (boundary - minY) / boxHeight))
+    local available = math.max(16, areaHeight - tileGap)
+    local heightA = math.max(8, math.floor(available * fraction))
+    return ui.column({ gap = tileGap, align = "start" }, {
+      buildLayout(groupA, areaWidth, heightA, depth),
+      buildLayout(groupB, areaWidth, available - heightA, depth),
+    })
   end
 
   local function workspaceCard(ws, index, width)
@@ -144,55 +248,65 @@ function M.new(preview)
       tooltip = noctalia.tr("panel.switch"),
       onClick = function() activateWorkspace(ws) end,
     })
-    local children = { ui.row({ align = "center", gap = 5 }, {
+    -- Keep the heading, window count and monitor on one compact line.
+    local headingRow = {
       heading,
-      ui.label({ text = tostring(#(ws.clients or {})), fontSize = 11,
+      ui.label({ text = tostring(#(ws.clients or {})), fontSize = 10,
         color = #(ws.clients or {}) > 0 and "secondary" or "on_surface_variant" }),
-    }) }
-    if ws.active and not preview then
-      table.insert(children, ui.label({ text = noctalia.tr("panel.active"), fontSize = 10, color = "primary" }))
+    }
+    if ws.monitor and ws.monitor ~= "" then
+      table.insert(headingRow, ui.label({ text = short(ws.monitor, 14), fontSize = 9, color = "on_surface_variant" }))
     end
-    if ws.monitor and ws.monitor ~= "" and not preview then
-      table.insert(children, ui.label({ text = short(ws.monitor, 20), fontSize = 10, color = "on_surface_variant" }))
-    end
+    local children = { ui.row({ align = "center", gap = 4 }, headingRow) }
     local clients = ws.clients or {}
-    -- Lay every window out as a thumbnail tile so a workspace reveals all of
-    -- its windows instead of only the first one.
-    local maxShown = 4
-    local tileColumns = 2
-    local tileGap = 6
-    local pad = preview and 7 or 8
-    local shown = math.min(#clients, maxShown)
-    local rows = math.ceil(shown / tileColumns)
-    local tileWidth = math.floor((width - pad * 2 - tileGap * (tileColumns - 1)) / tileColumns)
-    local tileImageHeight = math.floor(tileWidth * 9 / 16)
-    local tileHeight = tileImageHeight + 23
-    for row = 0, rows - 1 do
-      local tiles = {}
-      for column = 1, tileColumns do
-        local client = clients[row * tileColumns + column]
-        if client then table.insert(tiles, windowNode(client, tileWidth, tileImageHeight)) end
-      end
-      if #tiles > 0 then table.insert(children, ui.row({ gap = tileGap, align = "start" }, tiles)) end
+    -- Arrange every window by its real geometry so the card mirrors the
+    -- workspace tiling (side-by-side, stacked, master/stack, ...).
+    local pad = 6
+    local cardGap = 4
+    local items = {}
+    local maxTiles = 9
+    local extra = 0
+    for _, client in ipairs(clients) do
+      local at = client.at or { 0, 0 }
+      local size = client.size or { 1280, 720 }
+      items[#items + 1] = {
+        client = client,
+        x = tonumber(at[1]) or 0,
+        y = tonumber(at[2]) or 0,
+        w = math.max(1, tonumber(size[1]) or 1280),
+        h = math.max(1, tonumber(size[2]) or 720),
+      }
     end
-    if shown == 0 then
+    if #items > maxTiles then
+      table.sort(items, function(a, b) return a.w * a.h > b.w * b.h end)
+      extra = #items - maxTiles
+      for index2 = #items, maxTiles + 1, -1 do items[index2] = nil end
+    end
+    local interiorWidth = math.max(24, width - pad * 2)
+    local thumbHeight = 16
+    if #items > 0 then
+      local minX, minY, maxX, maxY = bboxOf(items)
+      local boxWidth = math.max(1, maxX - minX)
+      local boxHeight = math.max(1, maxY - minY)
+      thumbHeight = math.floor(interiorWidth * boxHeight / boxWidth)
+      thumbHeight = math.max(52, math.min(thumbHeight, 300))
+      table.insert(children, buildLayout(items, interiorWidth, thumbHeight, 0))
+    else
       table.insert(children, ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }))
-    elseif #clients > shown then
-      table.insert(children, ui.label({ text = "+" .. tostring(#clients - shown), fontSize = 11, color = "secondary" }))
     end
-    local labelCount = 0
-    if ws.active and not preview then labelCount = labelCount + 1 end
-    if ws.monitor and ws.monitor ~= "" and not preview then labelCount = labelCount + 1 end
-    local trailing = (shown == 0 or #clients > shown) and 16 or 0
-    local cardHeight = math.max(preview and 166 or 250,
-      pad * 2 + 22 + labelCount * 16 + rows * tileHeight + trailing + 5 * (#children - 1))
+    if extra > 0 then
+      table.insert(children, ui.label({ text = "+" .. tostring(extra), fontSize = 10, color = "secondary" }))
+      thumbHeight = thumbHeight + 16
+    end
+    -- No fixed minimum: the card is exactly as tall as its contents.
+    local cardHeight = pad * 2 + 22 + thumbHeight + cardGap * (#children - 1)
     if preview then
       return ui.column({
         key = "workspace-" .. tostring(ws.id), width = width, height = cardHeight,
-        gap = 5, padding = 7, radius = 7,
+        gap = cardGap, padding = pad, radius = 7,
         fill = ws.active and "primary/0.18" or "surface_variant/0.7",
         border = "outline/0.25", borderWidth = 1,
-      }, children)
+      }, children), cardHeight
     end
     return ui.dropZone({
       key = "workspace-" .. tostring(ws.id),
@@ -203,28 +317,41 @@ function M.new(preview)
         self:update()
       end,
       direction = "column", width = width, height = cardHeight,
-      gap = 5, padding = 8, radius = 8,
+      gap = cardGap, padding = pad, radius = 8,
       fill = ws.active and "primary/0.18" or "surface_variant/0.7",
       border = index == self.selected and "primary" or "outline/0.25",
       borderWidth = index == self.selected and 2 or 1,
-    }, children)
+    }, children), cardHeight
   end
 
   render = function()
     if not self.opened then return end
     local configuredColumns = noctalia.getConfig("columns") or 5
-    local columns = math.min(configuredColumns, preview and 4 or 5)
-    local cardWidth = math.floor((preview and 660 or 1050) / columns)
+    -- Size the cards to the workspaces actually shown, so a monitor with two
+    -- or three workspaces gets large thumbnails that fill the row instead of
+    -- a fixed five-column grid with empty edges.
+    local columns = math.min(configuredColumns, math.max(1, #self.visible))
+    local gridWidth = 1120
+    local gridGap = 6
+    local maxCardWidth = 556
+    local cardWidth = math.min(maxCardWidth, math.floor((gridWidth - gridGap * (columns - 1)) / columns))
     local grid = {}
+    local maxCardHeight = 0
+    local gridRows = 0
     for row = 1, math.ceil(#self.visible / columns) do
       local cards = {}
       for column = 1, columns do
         local index = (row - 1) * columns + column
         local ws = self.visible[index]
-        if ws then table.insert(cards, workspaceCard(ws, index, cardWidth)) end
+        if ws then
+          local card, cardHeight = workspaceCard(ws, index, cardWidth)
+          table.insert(cards, card)
+          if cardHeight > maxCardHeight then maxCardHeight = cardHeight end
+        end
       end
       if #cards > 0 then
-        table.insert(grid, ui.row({ key = "row-" .. row, gap = 8, align = "start" }, cards))
+        gridRows = gridRows + 1
+        table.insert(grid, ui.row({ key = "row-" .. row, gap = gridGap, align = "start", justify = "center" }, cards))
       end
     end
     if #grid == 0 then
@@ -242,7 +369,7 @@ function M.new(preview)
       ui.button({ glyph = "refresh", controlSize = "sm", tooltip = noctalia.tr("panel.refresh"), onClick = function() self:update() end }),
       ui.button({ glyph = "close", controlSize = "sm", tooltip = noctalia.tr("panel.close"), onClick = function() panel.close() end }),
     })
-    local content = { header, ui.scroll({ key = "workspace-grid", flexGrow = 1, gap = 8 }, grid) }
+    local content = { header, ui.scroll({ key = "workspace-grid", flexGrow = 1, gap = gridGap }, grid) }
     if not preview and self.selectedWindow then
       table.insert(content, ui.row({ gap = 8 }, {
         ui.button({ text = noctalia.tr("panel.focus"), glyph = "focus", onClick = function()
@@ -258,7 +385,15 @@ function M.new(preview)
     if not preview and not self.selectedWindow then
       table.insert(content, ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }))
     end
-    panel.render(ui.column({ height = preview and 396 or 696, gap = 10, padding = 12 }, content))
+    -- Size the root to its contents so the grid sits flush under the header;
+    -- taller layouts keep scrolling inside the fixed panel surface.
+    local bodyPad = 8
+    local gridHeight = gridRows > 0 and (gridRows * maxCardHeight + (gridRows - 1) * gridGap) or 0
+    local footerHeight = (not preview and self.selectedWindow) and 36 or (not preview and 14 or 0)
+    local contentHeight = bodyPad * 2 + 34 + gridHeight + (gridHeight > 0 and 8 or 0)
+      + (footerHeight > 0 and (8 + footerHeight) or 0)
+    contentHeight = math.max(180, math.min(416, contentHeight))
+    panel.render(ui.column({ height = contentHeight, gap = 8, padding = bodyPad }, content))
   end
 
   function self:update()
@@ -276,7 +411,7 @@ function M.new(preview)
       render()
       local remaining = noctalia.getConfig("max_captures") or 12
       local captures = {}
-      local maxPerWorkspace = 4
+      local maxPerWorkspace = 9
       for _, ws in ipairs(self.visible) do
         if remaining <= 0 then break end
         local shown = 0
