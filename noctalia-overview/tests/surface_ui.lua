@@ -71,7 +71,7 @@ assert(rendered.children[2].kind == "scroll", "workspace grid should scroll inde
 assert(#rendered.children[2].children == 1, "workspaces must stay on a single row")
 assert(#rendered.children[2].children[1].children == realHypr.LAYOUT.previewCount,
   "the window should always show the fixed number of previews")
-local windowMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 332, 850)
+local windowMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 312, 850)
 assert(rendered.children[2].children[1].children[1].props.width == windowMetrics.cardWidth,
   "previews should be sized from the panel, not the number of workspaces")
 assert(rendered.children[2].children[1].children[1].props.fill == "primary/0.18", "active workspace should stand out")
@@ -98,13 +98,31 @@ surface:key("Escape", true)
 -- The content column fills the panel's box exactly, so no space is left over
 -- below the footer; the scroll centers the row in the slack the fixed-aspect
 -- cards leave inside that box.
-assert(rendered.props.height == 332, "the panel content should fill its box")
-local threeCards = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 332, 850)
+assert(rendered.props.height == 312, "the panel content should fill its box")
+local threeCards = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 312, 850)
 assert(threeCards.cardWidth * 3 + 2 * realHypr.LAYOUT.gridGap <= 850,
   "the fixed row must fit the panel's inner width")
-assert(threeCards.cardWidth == realHypr.panelLayout(visible, 332, 850).cardWidth,
+assert(threeCards.cardWidth == realHypr.panelLayout(visible, 312, 850).cardWidth,
   "every card should get one fixed size")
 assert(rendered.children[2].props.justify == "center", "the preview row should stay centered")
+
+-- The monitor's active workspace is the default highlight, centered when it can be.
+visible[1].active = false
+visible[4].active = true
+local focused = assert(loadfile("lib/surface.luau", "t", env))().new()
+focused:open("")
+local page = rendered.children[2].children[1].children
+assert(#page == realHypr.LAYOUT.previewCount, "the active workspace should keep the preview window full")
+local selectedCard
+for _, card in ipairs(page) do
+  if card.props.borderWidth == 2 then selectedCard = card end
+end
+assert(selectedCard ~= nil, "the active workspace should be highlighted by default")
+assert(selectedCard.children[1].children[1].props.text == "4",
+  "the active workspace should be the default highlight")
+assert(page[2] == selectedCard, "the active workspace should open in the middle of the window")
+visible[1].active = true
+visible[4].active = false
 
 -- A taller panel is still filled, but cannot widen the cards past the row.
 local tall = assert(loadfile("lib/surface.luau", "t", env))().new()
@@ -114,8 +132,8 @@ assert(rendered.props.height == 572, "a taller panel should be filled too")
 assert(#rendered.children[2].children[1].children == realHypr.LAYOUT.previewCount,
   "a taller panel should still show the same number of previews")
 local tallMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 572, 850)
-assert(tallMetrics.cardWidth == windowMetrics.cardWidth,
-  "a taller panel cannot widen the cards past the row width")
+assert(tallMetrics.cardWidth * 3 + 2 * realHypr.LAYOUT.gridGap <= 850,
+  "a taller panel must still fit the cards inside the row")
 
 -- Fewer workspaces than the window should show what exists, still on one row.
 visible = { visible[1], visible[2] }
@@ -123,7 +141,7 @@ local adaptive = assert(loadfile("lib/surface.luau", "t", env))().new()
 adaptive:open("")
 assert(#rendered.children[2].children == 1 and #rendered.children[2].children[1].children == 2,
   "two workspaces should lay out as two cards on one row")
-local wideMetrics = realHypr.panelLayout({ visible[1], visible[2] }, 332, 850)
+local wideMetrics = realHypr.panelLayout({ visible[1], visible[2] }, 312, 850)
 assert(rendered.children[2].children[1].children[1].props.width == wideMetrics.cardWidth,
   "previews should keep the panel's card width")
 assert(wideMetrics.cardWidth == windowMetrics.cardWidth,
@@ -174,7 +192,7 @@ assert(#floatItems == 1 and floatItems[1].client.address == "0xt1", "floating wi
 local mixed = realHypr.panelLayout({
   { id = 1, clients = { { address = "0xm1", floating = false, at = { 0, 0 }, size = { 1920, 1080 } } } },
   { id = 2, clients = {} },
-}, 332, 850)
+}, 312, 850)
 assert(mixed.cards[1].previewHeight == mixed.cards[2].previewHeight,
   "empty workspaces should match the preview height of occupied ones")
 print("surface UI checks passed")

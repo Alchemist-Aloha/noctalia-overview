@@ -86,6 +86,7 @@ function M.new()
     offset = 0,
     maxOffset = 0,
     selected = 1,
+    selectActive = false,
     selectedWindow = nil,
     hoveredWindow = nil,
     fetching = false,
@@ -318,11 +319,30 @@ function M.new()
     return targetContent, gridWidth
   end
 
+  -- Index of the monitor's active workspace, so the overview can open on it.
+  local function activeIndex(records)
+    for index, record in ipairs(records) do
+      if record.active then return index end
+    end
+    return nil
+  end
+
   -- Workspace records for the preview window, sized to the panel.
   local function refreshVisible()
     self.workspaces = hypr.workspaces(self.snapshot, self.output,
       noctalia.getConfig("show_empty"), noctalia.getConfig("show_special"))
     self.maxOffset = math.max(0, #self.workspaces - hypr.LAYOUT.previewCount)
+    -- The first refresh of an open panel highlights the active workspace and
+    -- scrolls the window to it; later refreshes keep the user's selection.
+    if self.selectActive then
+      local index = activeIndex(self.workspaces)
+      if index then
+        self.selectActive = false
+        self.offset = math.max(0, math.min(self.maxOffset,
+          index - math.ceil(hypr.LAYOUT.previewCount / 2)))
+        self.selected = index - self.offset
+      end
+    end
     if self.offset > self.maxOffset then self.offset = self.maxOffset end
     self.visible = hypr.window(self.workspaces, hypr.LAYOUT.previewCount, self.offset)
     if self.selected > #self.visible then self.selected = math.max(1, #self.visible) end
@@ -451,6 +471,7 @@ function M.new()
     if context and context ~= "" then self.output = context end
     self.offset = 0
     self.selected = 1
+    self.selectActive = true
     self.selectedWindow = nil
     self.hoveredWindow = nil
     render()
@@ -496,7 +517,7 @@ function M.new()
 
   -- Defaults until the manifest is read; mirrors plugin.toml's overview panel.
   self.panelWidth = 900
-  self.panelHeight = 360
+  self.panelHeight = 340
   local directory = noctalia.pluginDir()
   if type(directory) == "string" and directory ~= "" then
     noctalia.runAsync({ "cat", directory .. "/plugin.toml" }, function(result)
