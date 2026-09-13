@@ -3,6 +3,7 @@ local PREVIEW = "alchemistaloha/noctalia-overview:preview"
 local OVERVIEW = "alchemistaloha/noctalia-overview:overview"
 local hypr = require("./lib/hypr.luau")
 local active = 1
+local activeOutput = nil
 local windows = {}
 local workspaces = {}
 local displayedIds = {}
@@ -39,20 +40,38 @@ local function render()
   local columns = noctalia.getConfig("columns") or 5
   local children = {}
   local ids = {}
+  local seen = {}
+  local otherOutputIds = {}
   local output = currentOutput()
   local showSpecial = noctalia.getConfig("show_special") == true
-  local showEmpty = noctalia.getConfig("show_empty_bar") == true
+  local showExtraEmpty = noctalia.getConfig("show_empty_bar") == true
+  local anchor = active > 0 and output == activeOutput and active or nil
+  local function add(id)
+    if not seen[id] then ids[#ids + 1] = id; seen[id] = true end
+  end
   for _, ws in ipairs(workspaces) do
     local id = tonumber(ws.id)
     local special = (id and id < 0) or (type(ws.name) == "string" and string.sub(ws.name, 1, 8) == "special:")
-    local onOutput = output ~= nil and (ws.monitor == output
-      or monitorNames[tonumber(ws.monitorID)] == output)
+    local monitor = ws.monitor
+    if type(monitor) == "number" then monitor = monitorNames[monitor] end
+    if monitor == nil or monitor == "" then monitor = monitorNames[tonumber(ws.monitorID)] end
+    local onOutput = output ~= nil and monitor == output
+    if id and monitor and output and monitor ~= output then otherOutputIds[id] = true end
     if onOutput and id then
       if special and showSpecial then
-        ids[#ids + 1] = id
-      elseif not special and (showEmpty or (tonumber(ws.windows) or 0) > 0 or id == active) then
-        ids[#ids + 1] = id
+        add(id)
+      elseif not special then
+        if not anchor then anchor = id end
+        if showExtraEmpty or (tonumber(ws.windows) or 0) > 0 or id == active then add(id) end
       end
+    end
+  end
+  -- Hyprland lists created workspaces, not the inactive slots shown by the
+  -- native bar. Keep one compact row of slots around this monitor's active ID.
+  if output and anchor and anchor > 0 then
+    local first = math.floor((anchor - 1) / columns) * columns + 1
+    for id = first, first + columns - 1 do
+      if not otherOutputIds[id] or (id == active and output == activeOutput) then add(id) end
     end
   end
   table.sort(ids, function(a, b)
@@ -99,10 +118,12 @@ function update()
       local monitors = noctalia.json.decode(result.stdout) or {}
       local name = currentOutput()
       local nextMonitorNames = {}
+      activeOutput = nil
       for _, monitor in ipairs(monitors) do
         if monitor.id ~= nil then nextMonitorNames[tonumber(monitor.id)] = monitor.name end
         if name ~= nil and monitor.name == name then
           active = tonumber(monitor.activeWorkspace and monitor.activeWorkspace.id) or active
+          activeOutput = name
         end
       end
       monitorNames = nextMonitorNames
@@ -116,7 +137,8 @@ function update()
     local list = noctalia.json.decode(result.stdout) or {}
     local nextWindows = {}
     for _, workspace in ipairs(list) do
-      nextWindows[workspace.id] = workspace.windows or 0
+      local id = tonumber(workspace.id)
+      if id then nextWindows[id] = tonumber(workspace.windows) or 0 end
     end
     workspaces = list
     windows = nextWindows

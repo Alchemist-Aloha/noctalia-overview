@@ -2,7 +2,7 @@
   "settings.rows": "Grid rows",
   "settings.columns": "Grid columns",
   "settings.show_empty": "Show empty workspaces",
-  "settings.show_empty_bar": "Show empty workspaces in bar",
+  "settings.show_empty_bar": "Show additional empty workspaces in bar",
   "settings.show_special": "Show special workspaces",
   "settings.show_titles": "Show window titles",
   "settings.show_hover_preview": "Show live preview on bar hover",

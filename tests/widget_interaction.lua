@@ -12,6 +12,7 @@ local workspaces = {
   { id = 2, name = "2", monitor = "TEST-1", windows = 1 },
   { id = 3, name = "3", monitor = "TEST-1", windows = 0 },
   { id = 11, name = "11", monitorID = 1, windows = 1 },
+  { id = 16, name = "16", monitor = "TEST-1", windows = 0 },
   { id = -98, name = "special:scratch", monitor = "TEST-1", windows = 1 },
   { id = 4, name = "4", monitor = "OTHER", windows = 1 },
 }
@@ -68,24 +69,24 @@ local env = setmetatable({
 
 assert(loadfile("widget.luau", "t", env))()
 env.update()
-assert(tree.kind == "row" and #tree.children == 3, "bar should show all real workspaces on its output, even beyond the overview page")
+assert(tree.kind == "row" and #tree.children == 5, "bar should show a compact local group plus real workspaces beyond it")
 assert(tree.children[1].kind == "box" and tree.children[1].props.width == 40, "active workspace should be a long pill")
 assert(tree.children[2].props.width == 16, "inactive workspaces should be compact pills")
-assert(tree.children[3].props.key == "ws-11", "a same-monitor workspace outside the numbered page should appear")
+assert(tree.children[5].props.key == "ws-11", "a same-monitor workspace outside the numbered page should appear")
 config.show_empty_bar = true
 env.update()
-assert(#tree.children == 4, "show_empty_bar should include real empty workspaces only")
+assert(#tree.children == 6, "show_empty_bar should include additional real empty workspaces")
 config.show_special = true
 env.update()
-assert(#tree.children == 5, "special workspace should appear only when opted in")
+assert(#tree.children == 7, "special workspace should appear only when opted in")
 config.show_special = false
 config.show_empty_bar = false
 output = "OTHER"
 env.update()
-assert(#tree.children == 1 and tree.children[1].props.key == "ws-4", "second bar must not show first monitor's workspaces")
+assert(#tree.children == 2 and tree.children[1].props.key == "ws-4", "second bar must exclude known workspaces from the first monitor")
 output = nil
 env.update()
-assert(#tree.children == 3, "unknown bar output should use focused monitor, not merge all monitors")
+assert(#tree.children == 5, "unknown bar output should use focused monitor, not merge all monitors")
 output = "TEST-1"
 env.update()
 env.onScroll("vertical", -1)
@@ -104,4 +105,7 @@ assert(open[overviewId] == false, "second click should close overview")
 env.onHover(false)
 env.onHover(true)
 assert(open[previewId] == true, "a fresh hover should open preview again")
+workspaces = {}
+env.update()
+assert(#tree.children == 5 and tree.children[1].props.key == "ws-1", "active and nearby slots should survive an empty workspace response")
 print("widget interaction checks passed")
