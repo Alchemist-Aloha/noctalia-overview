@@ -53,7 +53,7 @@ entry = "shortcut.luau"
 [[panel]]
 id = "overview"
 entry = "overview.luau"
-width = 840
+width = 900
 height = 360
 placement = "floating"
 position = "center"

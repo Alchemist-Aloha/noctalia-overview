@@ -43,3 +43,16 @@ This v5 native panel cannot reproduce the v4 QML overlay's exact window geometry
 - `grim` with the `-T` foreign-toplevel capture option
 
 The original v4 `hypr-overview` is a separate legacy plugin and is not needed to run this one.
+
+## Development
+
+The test suite needs a `lua` interpreter and mocks the Noctalia API, so it runs without a live session:
+
+```sh
+lua tests/surface_ui.lua
+lua tests/widget_interaction.lua
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

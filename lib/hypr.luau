@@ -81,20 +81,20 @@ local LAYOUT = {
     -- Narrowest card worth showing; the window clamps here instead of shrinking
     -- the previews further.
     minCardWidth = 120,
-    headingHeight = 22,
+    -- The card heading is an `sm` button (32px), so it sets the heading row's
+    -- height - a smaller estimate would clip the previews inside the card.
+    headingHeight = 32,
     maxTiles = 9,
     bodyPad = 8,
-    -- Conservative chrome estimates: the rendered header/footer rows are a few
-    -- pixels taller than the raw font sizes, which would otherwise make the
-    -- grid overflow and show a scroll bar. The footer holds `md` buttons (38px)
-    -- once a window is selected.
-    headerHeight = 40,
+    -- Chrome around the grid: `headerHeight` is the `sm` button in the header,
+    -- `footerHeight` the taller (`md` buttons) footer shown once a window is
+    -- selected. The scroll container absorbs whatever is left over.
+    headerHeight = 32,
     scrollGap = 8,
     footerHeight = 38,
-    minContentHeight = 180,
-    -- Insets from the panel's configured size to the usable content area.
-    panelInset = 56,
-    panelMargin = 24,
+    -- Inset the shell applies around a decorated panel (Style::panelPadding);
+    -- the panel's configured size minus this on both sides is ours to lay out.
+    panelPadding = 14,
 }
 
 Hypr.LAYOUT = LAYOUT
@@ -149,11 +149,10 @@ local function gridHeightAvailable(targetContent)
 end
 
 -- Chrome inside a card around its preview area (padding, heading, bottom
--- spacer and the gaps between them). `extra` adds the "+N" label row.
-local function cardChrome(extra)
-    local children = extra and 4 or 3
-    return LAYOUT.cardPad * 2 + LAYOUT.headingHeight + LAYOUT.cardSpacer
-        + LAYOUT.cardGap * (children - 1)
+-- spacer and the gaps between them). Every card gets the same chrome, so the
+-- preview sections stay one fixed size.
+local function cardChrome()
+    return LAYOUT.cardPad * 2 + LAYOUT.headingHeight + LAYOUT.cardSpacer + LAYOUT.cardGap * 2
 end
 
 -- Widest card whose fixed-aspect preview still fits the panel height.
@@ -162,43 +161,40 @@ local function maxCardWidth(targetContent)
     if not gridHeight then
         return LAYOUT.gridWidth
     end
-    local previewHeight = math.max(1, gridHeight - cardChrome(false))
+    local previewHeight = math.max(1, gridHeight - cardChrome())
     return math.max(LAYOUT.minCardWidth,
         math.floor(previewHeight * LAYOUT.previewAspect) + LAYOUT.cardPad * 2)
 end
 
--- One-row metrics for the workspaces on screen: uniform card width, the
--- shared preview height and the content height the panel needs.
+-- One-row metrics for the workspaces on screen: one card size for the whole
+-- overview and the shared preview height. The panel renders its own content
+-- height, so the scroll container absorbs whatever the fixed-aspect cards do
+-- not use.
 function Hypr.panelLayout(visible, targetContent, gridWidth)
     visible = visible or {}
     gridWidth = math.max(64, numberOr(gridWidth, LAYOUT.gridWidth))
-    local count = #visible
     local gap = LAYOUT.gridGap
     local pad = LAYOUT.cardPad
-    -- Widen the cards to fill the row, but never past the height the panel can
-    -- show at the preview's fixed aspect ratio.
-    local available = math.max(16, gridWidth - gap * math.max(0, count - 1))
-    local cardWidth = math.floor(available / math.max(1, count))
+    -- Fixed card size: the row is laid out for the full preview count, so a
+    -- monitor with one or two workspaces keeps the same size instead of
+    -- stretching its cards, and it still fits the panel width.
+    local slots = math.max(1, LAYOUT.previewCount)
+    local available = math.max(16, gridWidth - gap * (slots - 1))
+    local cardWidth = math.floor(available / slots)
     cardWidth = math.max(LAYOUT.minCardWidth,
-        math.min(cardWidth, maxCardWidth(numberOr(targetContent, LAYOUT.minContentHeight))))
+        math.min(cardWidth, maxCardWidth(targetContent)))
     local previewHeight = math.max(8, math.floor((cardWidth - pad * 2) / LAYOUT.previewAspect))
     local cards = {}
-    local extra = false
     for index, record in ipairs(visible) do
-        local hasExtra = #(record.clients or {}) > LAYOUT.maxTiles
-        extra = extra or hasExtra
-        cards[index] = { previewHeight = previewHeight, extra = hasExtra }
+        cards[index] = {
+            previewHeight = previewHeight,
+            extra = #(record.clients or {}) > LAYOUT.maxTiles,
+        }
     end
-    local gridHeight = count > 0 and (cardChrome(extra) + previewHeight + (extra and 16 or 0)) or 0
-    local contentHeight = LAYOUT.bodyPad * 2 + LAYOUT.headerHeight + gridHeight
-        + (gridHeight > 0 and LAYOUT.scrollGap or 0)
-        + (LAYOUT.footerHeight > 0 and (LAYOUT.scrollGap + LAYOUT.footerHeight) or 0)
     return {
         cardWidth = cardWidth,
         previewHeight = previewHeight,
-        rows = count > 0 and 1 or 0,
         cards = cards,
-        contentHeight = math.max(LAYOUT.minContentHeight, contentHeight),
     }
 end
 

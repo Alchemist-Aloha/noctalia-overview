@@ -71,7 +71,7 @@ assert(rendered.children[2].kind == "scroll", "workspace grid should scroll inde
 assert(#rendered.children[2].children == 1, "workspaces must stay on a single row")
 assert(#rendered.children[2].children[1].children == realHypr.LAYOUT.previewCount,
   "the window should always show the fixed number of previews")
-local windowMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 276, 784)
+local windowMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 332, 856)
 assert(rendered.children[2].children[1].children[1].props.width == windowMetrics.cardWidth,
   "previews should be sized from the panel, not the number of workspaces")
 assert(rendered.children[2].children[1].children[1].props.fill == "primary/0.18", "active workspace should stand out")
@@ -95,14 +95,27 @@ assert(rendered.children[2].children[1].children[1].children[1].children[1].prop
   "Down should scroll the window by one workspace")
 surface:key("Escape", true)
 
--- A taller panel should scale the previews up, not add more of them.
+-- The content column fills the panel's box exactly, so no space is left over
+-- below the footer; the scroll centers the row in the slack the fixed-aspect
+-- cards leave inside that box.
+assert(rendered.props.height == 332, "the panel content should fill its box")
+local threeCards = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 332, 856)
+assert(threeCards.cardWidth * 3 + 2 * realHypr.LAYOUT.gridGap <= 856,
+  "the fixed row must fit the panel's inner width")
+assert(threeCards.cardWidth == realHypr.panelLayout(visible, 332, 856).cardWidth,
+  "every card should get one fixed size")
+assert(rendered.children[2].props.justify == "center", "the preview row should stay centered")
+
+-- A taller panel is still filled, but cannot widen the cards past the row.
 local tall = assert(loadfile("lib/surface.luau", "t", env))().new()
 tall.panelHeight = 600
 tall:open("")
+assert(rendered.props.height == 572, "a taller panel should be filled too")
 assert(#rendered.children[2].children[1].children == realHypr.LAYOUT.previewCount,
   "a taller panel should still show the same number of previews")
-local tallMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 576, 784)
-assert(tallMetrics.previewHeight > windowMetrics.previewHeight, "a taller panel should grow the previews")
+local tallMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 572, 856)
+assert(tallMetrics.cardWidth == windowMetrics.cardWidth,
+  "a taller panel cannot widen the cards past the row width")
 
 -- Fewer workspaces than the window should show what exists, still on one row.
 visible = { visible[1], visible[2] }
@@ -110,9 +123,11 @@ local adaptive = assert(loadfile("lib/surface.luau", "t", env))().new()
 adaptive:open("")
 assert(#rendered.children[2].children == 1 and #rendered.children[2].children[1].children == 2,
   "two workspaces should lay out as two cards on one row")
-local wideMetrics = realHypr.panelLayout({ visible[1], visible[2] }, 276, 784)
+local wideMetrics = realHypr.panelLayout({ visible[1], visible[2] }, 332, 856)
 assert(rendered.children[2].children[1].children[1].props.width == wideMetrics.cardWidth,
   "previews should keep the panel's card width")
+assert(wideMetrics.cardWidth == windowMetrics.cardWidth,
+  "fewer workspaces should not resize the preview sections")
 assert(wideMetrics.cards[1].previewHeight == wideMetrics.cards[2].previewHeight,
   "previews should share one fixed aspect ratio")
 assert(math.abs((wideMetrics.cardWidth - 12) - wideMetrics.previewHeight * 16 / 9) < 2,
@@ -159,7 +174,7 @@ assert(#floatItems == 1 and floatItems[1].client.address == "0xt1", "floating wi
 local mixed = realHypr.panelLayout({
   { id = 1, clients = { { address = "0xm1", floating = false, at = { 0, 0 }, size = { 1920, 1080 } } } },
   { id = 2, clients = {} },
-}, 276, 784)
+}, 332, 856)
 assert(mixed.cards[1].previewHeight == mixed.cards[2].previewHeight,
   "empty workspaces should match the preview height of occupied ones")
 print("surface UI checks passed")

@@ -265,6 +265,12 @@ function M.new()
     if ws.monitor and ws.monitor ~= "" then
       table.insert(headingRow, ui.label({ text = short(ws.monitor, 14), fontSize = 9, color = "on_surface_variant" }))
     end
+    -- The "+N" badge rides in the heading row so a card with hidden windows is
+    -- exactly as tall as every other card, keeping the previews one fixed size.
+    if metrics and metrics.extra then
+      table.insert(headingRow, ui.label({ text = "+" .. tostring(#(ws.clients or {}) - hypr.LAYOUT.maxTiles),
+        fontSize = 10, color = "secondary" }))
+    end
     local children = { ui.row({ align = "center", gap = 4 }, headingRow) }
     -- Arrange every window by its real geometry so the card mirrors the
     -- workspace tiling (side-by-side, stacked, master/stack, ...).
@@ -272,7 +278,6 @@ function M.new()
     local cardGap = hypr.LAYOUT.cardGap
     local items = hypr.windowItems(ws)
     local previewHeight = metrics and metrics.previewHeight or 16
-    local extra = metrics and metrics.extra or (#(ws.clients or {}) > hypr.LAYOUT.maxTiles)
     local interiorWidth = math.max(24, width - pad * 2)
     if #items > 0 then
       table.insert(children, buildLayout(items, interiorWidth, previewHeight, 0))
@@ -281,10 +286,6 @@ function M.new()
       table.insert(children, ui.row({ height = previewHeight, align = "center", justify = "center" }, {
         ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }),
       }))
-    end
-    if extra then
-      table.insert(children, ui.label({ text = "+" .. tostring(#(ws.clients or {}) - hypr.LAYOUT.maxTiles), fontSize = 10, color = "secondary" }))
-      previewHeight = previewHeight + 16
     end
     -- Spacer so the thumbnails do not sit flush against the card's bottom edge.
     table.insert(children, ui.spacer({ height = hypr.LAYOUT.cardSpacer }))
@@ -306,10 +307,14 @@ function M.new()
     }, children), cardHeight
   end
 
-  -- Usable panel content area: everything the preview row is laid out into.
+  -- Usable panel content area: the shell insets the configured panel size by
+  -- Style::panelPadding, then the rendered column adds bodyPad on every side.
+  -- The preview row must fit inside that inner box or the scroll clips it.
   local function panelArea()
-    local targetContent = self.panelHeight and math.max(0, self.panelHeight - hypr.LAYOUT.panelMargin) or nil
-    local gridWidth = self.panelWidth and math.max(64, self.panelWidth - hypr.LAYOUT.panelInset) or nil
+    local inset = hypr.LAYOUT.panelPadding * 2
+    local targetContent = self.panelHeight and math.max(0, self.panelHeight - inset) or nil
+    local gridWidth = self.panelWidth
+      and math.max(64, self.panelWidth - inset - hypr.LAYOUT.bodyPad * 2) or nil
     return targetContent, gridWidth
   end
 
@@ -395,7 +400,12 @@ function M.new()
       ui.button({ glyph = "refresh", controlSize = "sm", tooltip = noctalia.tr("panel.refresh"), onClick = function() self:update() end }),
       ui.button({ glyph = "close", controlSize = "sm", tooltip = noctalia.tr("panel.close"), onClick = function() panel.close() end }),
     })
-    local content = { header, ui.scroll({ key = "workspace-grid", flexGrow = 1, gap = gridGap }, grid) }
+    local content = {
+      -- The row is centered in whatever the fixed-aspect cards leave over, so
+      -- the footer stays pinned to the panel's bottom edge.
+      header,
+      ui.scroll({ key = "workspace-grid", flexGrow = 1, gap = gridGap, justify = "center" }, grid),
+    }
     -- Reserve the same footer height in both states so the computed content
     -- height stays valid when a window gets selected.
     if self.selectedWindow then
@@ -414,9 +424,9 @@ function M.new()
         ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }),
       }))
     end
-    -- The panel surface is a fixed bucket size; rendering the predicted
-    -- content height keeps the grid flush under the header.
-    panel.render(ui.column({ height = metrics.contentHeight, gap = 8, padding = hypr.LAYOUT.bodyPad }, content))
+    -- Fill the panel's content box exactly: the scroll container absorbs the
+    -- difference between the fixed-aspect cards and the space available.
+    panel.render(ui.column({ height = targetContent, gap = 8, padding = hypr.LAYOUT.bodyPad }, content))
   end
 
   function self:update()
@@ -485,8 +495,8 @@ function M.new()
   end
 
   -- Defaults until the manifest is read; mirrors plugin.toml's overview panel.
-  self.panelWidth = hypr.LAYOUT.gridWidth + hypr.LAYOUT.panelInset
-  self.panelHeight = 300
+  self.panelWidth = 900
+  self.panelHeight = 360
   local directory = noctalia.pluginDir()
   if type(directory) == "string" and directory ~= "" then
     noctalia.runAsync({ "cat", directory .. "/plugin.toml" }, function(result)
