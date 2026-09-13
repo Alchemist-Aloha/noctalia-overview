@@ -1,0 +1,12 @@
+# Noctalia writes this next to the plugin when settings are changed.
+settings.json
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.opencode/
+
+# Luau / Lua build output
+*.luac
