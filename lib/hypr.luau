@@ -73,21 +73,25 @@ local LAYOUT = {
     cardGap = 4,
     -- Breathing room between the window thumbnails and the card's bottom edge.
     cardSpacer = 12,
-    minThumbHeight = 52,
-    maxThumbHeight = 300,
+    -- Fixed aspect ratio (width / height) of every workspace preview, so cards
+    -- are never stretched just to fill leftover panel space.
+    previewAspect = 16 / 9,
+    -- Previews kept on the screen at once; the chevrons scroll this window.
+    previewCount = 3,
+    -- Narrowest card worth showing; the window clamps here instead of shrinking
+    -- the previews further.
+    minCardWidth = 120,
     headingHeight = 22,
     maxTiles = 9,
     bodyPad = 8,
     -- Conservative chrome estimates: the rendered header/footer rows are a few
     -- pixels taller than the raw font sizes, which would otherwise make the
-    -- grid overflow and show a scroll bar.
+    -- grid overflow and show a scroll bar. The footer holds `md` buttons (38px)
+    -- once a window is selected.
     headerHeight = 40,
     scrollGap = 8,
-    footerHeight = 32,
+    footerHeight = 38,
     minContentHeight = 180,
-    -- Slack left when growing the cards to fill the panel, covering the
-    -- difference between the estimated chrome and the rendered header/footer.
-    fillInset = 16,
     -- Insets from the panel's configured size to the usable content area.
     panelInset = 56,
     panelMargin = 24,
@@ -134,77 +138,65 @@ function Hypr.windowItems(record)
     return items
 end
 
--- Thumbnail area height for a workspace, scaled from its window bounding box.
-function Hypr.thumbHeight(record, interiorWidth)
-    local items = Hypr.windowItems(record)
-    local minX, minY, maxX, maxY = Hypr.bboxOf(items)
-    if minX == nil then
+-- Height the panel gives the preview row: everything below the panel size
+-- minus the body padding, header, row gaps and footer.
+local function gridHeightAvailable(targetContent)
+    if not targetContent then
         return nil
     end
-    local boxWidth = math.max(1, maxX - minX)
-    local boxHeight = math.max(1, maxY - minY)
-    local height = math.floor(interiorWidth * boxHeight / boxWidth)
-    return math.max(LAYOUT.minThumbHeight, math.min(LAYOUT.maxThumbHeight, height))
+    return targetContent - LAYOUT.bodyPad * 2 - LAYOUT.headerHeight
+        - LAYOUT.scrollGap * 2 - LAYOUT.footerHeight
 end
 
--- Grid metrics for a set of visible workspace records: column count, card
--- width, per-card thumbnail heights and the content height needed to host
--- everything without scrolling.
-function Hypr.panelLayout(visible, configuredColumns, targetContent, gridWidth)
+-- Chrome inside a card around its preview area (padding, heading, bottom
+-- spacer and the gaps between them). `extra` adds the "+N" label row.
+local function cardChrome(extra)
+    local children = extra and 4 or 3
+    return LAYOUT.cardPad * 2 + LAYOUT.headingHeight + LAYOUT.cardSpacer
+        + LAYOUT.cardGap * (children - 1)
+end
+
+-- Widest card whose fixed-aspect preview still fits the panel height.
+local function maxCardWidth(targetContent)
+    local gridHeight = gridHeightAvailable(targetContent)
+    if not gridHeight then
+        return LAYOUT.gridWidth
+    end
+    local previewHeight = math.max(1, gridHeight - cardChrome(false))
+    return math.max(LAYOUT.minCardWidth,
+        math.floor(previewHeight * LAYOUT.previewAspect) + LAYOUT.cardPad * 2)
+end
+
+-- One-row metrics for the workspaces on screen: uniform card width, the
+-- shared preview height and the content height the panel needs.
+function Hypr.panelLayout(visible, targetContent, gridWidth)
     visible = visible or {}
     gridWidth = math.max(64, numberOr(gridWidth, LAYOUT.gridWidth))
     local count = #visible
-    local columns = math.min(math.max(1, numberOr(configuredColumns, 5)), math.max(1, count))
-    local available = math.max(16, gridWidth - LAYOUT.gridGap * (columns - 1))
-    local cardWidth = math.max(32, math.floor(available / columns))
-    local interiorWidth = math.max(24, cardWidth - LAYOUT.cardPad * 2)
+    local gap = LAYOUT.gridGap
+    local pad = LAYOUT.cardPad
+    -- Widen the cards to fill the row, but never past the height the panel can
+    -- show at the preview's fixed aspect ratio.
+    local available = math.max(16, gridWidth - gap * math.max(0, count - 1))
+    local cardWidth = math.floor(available / math.max(1, count))
+    cardWidth = math.max(LAYOUT.minCardWidth,
+        math.min(cardWidth, maxCardWidth(numberOr(targetContent, LAYOUT.minContentHeight))))
+    local previewHeight = math.max(8, math.floor((cardWidth - pad * 2) / LAYOUT.previewAspect))
     local cards = {}
-    local maxCardHeight = 0
-    local function chromeHeight(extra)
-        -- heading + preview + optional "+N" label + bottom spacer + gaps between them
-        local children = extra and 4 or 3
-        return LAYOUT.cardPad * 2 + LAYOUT.headingHeight + LAYOUT.cardSpacer
-            + LAYOUT.cardGap * (children - 1)
-    end
-    for _, record in ipairs(visible) do
-        local thumb = Hypr.thumbHeight(record, interiorWidth)
-        local extra = #(record.clients or {}) > LAYOUT.maxTiles
-        if thumb == nil then thumb = 16 end
-        local height = chromeHeight(extra) + thumb + (extra and 16 or 0)
-        if height > maxCardHeight then maxCardHeight = height end
-    end
-    -- Every card gets the same preview-section height so an empty workspace
-    -- matches the occupied ones instead of collapsing to a thin strip.
+    local extra = false
     for index, record in ipairs(visible) do
-        local extra = #(record.clients or {}) > LAYOUT.maxTiles
-        local thumb = maxCardHeight - chromeHeight(extra) - (extra and 16 or 0)
-        cards[index] = {
-            thumbHeight = math.max(LAYOUT.minThumbHeight, thumb),
-            extra = extra,
-        }
+        local hasExtra = #(record.clients or {}) > LAYOUT.maxTiles
+        extra = extra or hasExtra
+        cards[index] = { previewHeight = previewHeight, extra = hasExtra }
     end
-    local rows = math.ceil(math.max(1, count) / columns)
-    local gridHeight = count > 0 and (rows * maxCardHeight + (rows - 1) * LAYOUT.gridGap) or 0
-    local footer = LAYOUT.footerHeight
+    local gridHeight = count > 0 and (cardChrome(extra) + previewHeight + (extra and 16 or 0)) or 0
     local contentHeight = LAYOUT.bodyPad * 2 + LAYOUT.headerHeight + gridHeight
         + (gridHeight > 0 and LAYOUT.scrollGap or 0)
-        + (footer > 0 and (LAYOUT.scrollGap + footer) or 0)
-    -- `targetContent` is the panel's usable height. Grow the thumbnail area
-    -- (not the bottom margin) to fill it so the previews use the whole window.
-    if targetContent and targetContent > contentHeight and count > 0 then
-        local extra = targetContent - contentHeight - LAYOUT.fillInset
-        if extra > 0 then
-            local extraPerRow = extra / rows
-            for _, card in ipairs(cards) do
-                card.thumbHeight = card.thumbHeight + extraPerRow
-            end
-        end
-        contentHeight = targetContent
-    end
+        + (LAYOUT.footerHeight > 0 and (LAYOUT.scrollGap + LAYOUT.footerHeight) or 0)
     return {
-        columns = columns,
         cardWidth = cardWidth,
-        rows = rows,
+        previewHeight = previewHeight,
+        rows = count > 0 and 1 or 0,
         cards = cards,
         contentHeight = math.max(LAYOUT.minContentHeight, contentHeight),
     }
@@ -445,15 +437,11 @@ end
 
 Hypr.group = Hypr.groupState
 
--- Return the workspace records shown on one output and page.  Empty normal
--- workspaces can be included, while special workspaces are opt-in.  `pageOffset`
--- is a zero-based page number; negative values are clamped to zero.
-function Hypr.visible(snapshot, outputName, rows, columns, showEmpty, showSpecial, pageOffset)
+-- Every workspace record the overview can show on one output, sorted by id
+-- (special workspaces last). This is the whole list the preview window scrolls
+-- through; `Hypr.window` picks the records on screen.
+function Hypr.workspaces(snapshot, outputName, showEmpty, showSpecial)
     snapshot = snapshot or {}
-    rows = math.max(1, numberOr(rows, 1))
-    columns = math.max(1, numberOr(columns, 1))
-    pageOffset = math.max(0, numberOr(pageOffset, 0))
-    local capacity = rows * columns
     local state = Hypr.groupState(snapshot.monitors, snapshot.workspaces, snapshot.clients)
     local outputKey = outputName and tostring(outputName) or nil
     if outputKey == "" then
@@ -503,32 +491,19 @@ function Hypr.visible(snapshot, outputName, rows, columns, showEmpty, showSpecia
         return tostring(left.name) < tostring(right.name)
     end)
 
-    local first = pageOffset * capacity + 1
-    local last = first + capacity - 1
-    local byId = {}
-    local specials = {}
-    for _, record in ipairs(candidates) do
-        if record.special then
-            specials[#specials + 1] = record
-        elseif type(record.id) == "number" and record.id >= first and record.id <= last then
-            byId[record.id] = record
-        end
-    end
-    -- Only real workspaces: an empty slot for a workspace that does not exist
-    -- (or belongs to another monitor) would show phantom entries in the grid.
+    return candidates
+end
+
+-- The preview window: `count` records starting at `offset`, clamped so it never
+-- runs past the end (the last window stays full when enough workspaces exist).
+function Hypr.window(records, count, offset)
+    records = records or {}
+    count = math.max(1, numberOr(count, 1))
+    offset = math.max(0, numberOr(offset, 0))
+    local first = math.min(offset + 1, math.max(1, #records - count + 1))
     local result = {}
-    for id = first, last do
-        local record = byId[id]
-        if record then
-            result[#result + 1] = record
-        end
-    end
-    if showSpecial then
-        local reserved = math.min(#specials, math.max(0, capacity - 1))
-        for index = 1, reserved do
-            if #result >= capacity then table.remove(result) end
-            result[#result + 1] = specials[index]
-        end
+    for index = first, math.min(first + count - 1, #records) do
+        result[#result + 1] = records[index]
     end
     return result
 end

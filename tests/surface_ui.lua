@@ -25,15 +25,17 @@ for id = 1, 10 do
   visible[id] = { id = id, name = tostring(id), active = id == 1, clients = clients, monitor = "TEST-1" }
 end
 
-local config = { rows = 2, columns = 5, show_empty = true, show_special = false,
+local config = { show_empty = true, show_special = false,
   max_captures = 20, capture_interval_ms = 1200 }
 local rendered
 local captured = {}
 -- Reuse the real (pure) layout helpers so the test exercises the shared math.
 local realHypr = assert(loadfile("lib/hypr.luau", "t", setmetatable({}, { __index = _G })))()
+
 local hypr = setmetatable({
   fetch = function(callback) callback({ monitors = { {} }, clients = {}, workspaces = {} }) end,
-  visible = function() return visible end,
+  -- Hand the synthetic workspaces to the real window slicer.
+  workspaces = function() return visible end,
   dispatch = function() end,
   newCaptureManager = function(_, onImage)
     return {
@@ -66,7 +68,12 @@ local surface = assert(loadfile("lib/surface.luau", "t", env))().new()
 surface:open("")
 assert(rendered.kind == "column", "panel header and footer should stay outside scroll")
 assert(rendered.children[2].kind == "scroll", "workspace grid should scroll independently")
-assert(#rendered.children[2].children == 2, "ten configured columns should reflow to five per row")
+assert(#rendered.children[2].children == 1, "workspaces must stay on a single row")
+assert(#rendered.children[2].children[1].children == realHypr.LAYOUT.previewCount,
+  "the window should always show the fixed number of previews")
+local windowMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 276, 784)
+assert(rendered.children[2].children[1].children[1].props.width == windowMetrics.cardWidth,
+  "previews should be sized from the panel, not the number of workspaces")
 assert(rendered.children[2].children[1].children[1].props.fill == "primary/0.18", "active workspace should stand out")
 assert(rendered.children[2].children[1].children[1].props.borderWidth == 2, "keyboard selection should have a border")
 local firstWindow = rendered.children[2].children[1].children[1].children[2].children[1].children[1]
@@ -81,21 +88,37 @@ local stackedLayout = rendered.children[2].children[1].children[2].children[2]
 assert(stackedLayout.kind == "column", "top/bottom windows should split into rows")
 local captureCount = 0
 for _ in pairs(captured) do captureCount = captureCount + 1 end
-assert(captureCount == 13, "capture budget should cover every window shown in a workspace")
+assert(captureCount == 6, "capture budget should cover every window shown on screen")
 surface:key("Down", true)
-assert(rendered.children[2].children[2].children[1].props.borderWidth == 2, "keyboard movement should match displayed columns")
+assert(rendered.children[2].children[1].children[1].props.borderWidth == 2, "scrolling should keep the keyboard selection")
+assert(rendered.children[2].children[1].children[1].children[1].children[1].props.text == "2",
+  "Down should scroll the window by one workspace")
 surface:key("Escape", true)
 
--- Fewer workspaces than configured columns should widen the cards to fill the row.
+-- A taller panel should scale the previews up, not add more of them.
+local tall = assert(loadfile("lib/surface.luau", "t", env))().new()
+tall.panelHeight = 600
+tall:open("")
+assert(#rendered.children[2].children[1].children == realHypr.LAYOUT.previewCount,
+  "a taller panel should still show the same number of previews")
+local tallMetrics = realHypr.panelLayout({ visible[1], visible[2], visible[3] }, 576, 784)
+assert(tallMetrics.previewHeight > windowMetrics.previewHeight, "a taller panel should grow the previews")
+
+-- Fewer workspaces than the window should show what exists, still on one row.
 visible = { visible[1], visible[2] }
 local adaptive = assert(loadfile("lib/surface.luau", "t", env))().new()
 adaptive:open("")
 assert(#rendered.children[2].children == 1 and #rendered.children[2].children[1].children == 2,
-  "two workspaces should lay out as two columns")
-assert(rendered.children[2].children[1].children[1].props.width > 205,
-  "fewer workspaces should get larger cards")
+  "two workspaces should lay out as two cards on one row")
+local wideMetrics = realHypr.panelLayout({ visible[1], visible[2] }, 276, 784)
+assert(rendered.children[2].children[1].children[1].props.width == wideMetrics.cardWidth,
+  "previews should keep the panel's card width")
+assert(wideMetrics.cards[1].previewHeight == wideMetrics.cards[2].previewHeight,
+  "previews should share one fixed aspect ratio")
+assert(math.abs((wideMetrics.cardWidth - 12) - wideMetrics.previewHeight * 16 / 9) < 2,
+  "previews should keep the fixed 16:9 aspect ratio")
 
--- Hypr.visible must not invent workspace slots for other monitors.
+-- Hypr.workspaces must not include another monitor's workspaces.
 local wsSnapshot = {
   monitors = {
     { id = 0, name = "TEST-1", activeWorkspace = { id = 4 } },
@@ -113,11 +136,17 @@ local wsSnapshot = {
     { address = "0x3", workspace = { id = 1, name = "1" }, monitor = 1 },
   },
 }
-local withoutEmpty = realHypr.visible(wsSnapshot, "TEST-1", 2, 5, false, false, 0)
+local withoutEmpty = realHypr.workspaces(wsSnapshot, "TEST-1", false, false)
 assert(#withoutEmpty == 2, "show_empty=false should hide the monitor's empty workspace")
-local withEmpty = realHypr.visible(wsSnapshot, "TEST-1", 2, 5, true, false, 0)
+local withEmpty = realHypr.workspaces(wsSnapshot, "TEST-1", true, false)
 assert(#withEmpty == 3, "show_empty should add only the monitor's own existing workspaces")
 assert(withEmpty[1].id == 4 and withEmpty[3].id == 6, "only this monitor's workspaces should appear")
+
+-- The preview window slices the list and clamps at both ends.
+local records = { { id = 1 }, { id = 2 }, { id = 3 }, { id = 4 } }
+assert(realHypr.window(records, 3, 0)[1].id == 1, "the first window should start at the first workspace")
+assert(realHypr.window(records, 3, 5)[1].id == 2, "the window should clamp to the end")
+assert(#realHypr.window(records, 3, 5) == 3, "the clamped window should stay full")
 
 -- Floating windows are ignored by the preview layout.
 local floatItems = realHypr.windowItems({ clients = {
@@ -130,7 +159,7 @@ assert(#floatItems == 1 and floatItems[1].client.address == "0xt1", "floating wi
 local mixed = realHypr.panelLayout({
   { id = 1, clients = { { address = "0xm1", floating = false, at = { 0, 0 }, size = { 1920, 1080 } } } },
   { id = 2, clients = {} },
-}, 5, false)
-assert(mixed.cards[1].thumbHeight == mixed.cards[2].thumbHeight,
+}, 276, 784)
+assert(mixed.cards[1].previewHeight == mixed.cards[2].previewHeight,
   "empty workspaces should match the preview height of occupied ones")
 print("surface UI checks passed")

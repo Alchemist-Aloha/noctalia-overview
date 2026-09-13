@@ -1,6 +1,4 @@
 {
-  "settings.rows": "Grid rows",
-  "settings.columns": "Grid columns",
   "settings.show_empty": "Show empty workspaces",
   "settings.show_special": "Show special workspaces",
   "settings.capture_interval": "Preview refresh interval (ms)",

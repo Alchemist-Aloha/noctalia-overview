@@ -10,22 +10,6 @@ icon = "layout-dashboard"
 dependencies = ["hyprctl", "grim"]
 
 [[setting]]
-key = "rows"
-type = "int"
-label_key = "settings.rows"
-default = 2
-min = 1
-max = 5
-
-[[setting]]
-key = "columns"
-type = "int"
-label_key = "settings.columns"
-default = 5
-min = 1
-max = 10
-
-[[setting]]
 key = "show_empty"
 type = "bool"
 label_key = "settings.show_empty"
@@ -63,13 +47,14 @@ entry = "widget.luau"
 id = "toggle"
 entry = "shortcut.luau"
 
-# Panel size: set the width/height you want here. The workspace previews adapt
-# to this size automatically, so no other size settings are needed.
+# Panel size: set the width/height you want here. The previews adapt to this
+# size automatically (one row, fixed aspect ratio), so no other size settings
+# are needed; the two chevrons scroll the three-preview window through the rest.
 [[panel]]
 id = "overview"
 entry = "overview.luau"
 width = 840
-height = 300
+height = 360
 placement = "floating"
 position = "center"
 keyboard_focus = "exclusive"

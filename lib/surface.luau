@@ -83,7 +83,8 @@ function M.new()
     snapshot = { clients = {}, monitors = {}, workspaces = {} },
     output = "",
     visible = {},
-    page = 0,
+    offset = 0,
+    maxOffset = 0,
     selected = 1,
     selectedWindow = nil,
     hoveredWindow = nil,
@@ -270,25 +271,25 @@ function M.new()
     local pad = hypr.LAYOUT.cardPad
     local cardGap = hypr.LAYOUT.cardGap
     local items = hypr.windowItems(ws)
-    local thumbHeight = metrics and metrics.thumbHeight or 16
+    local previewHeight = metrics and metrics.previewHeight or 16
     local extra = metrics and metrics.extra or (#(ws.clients or {}) > hypr.LAYOUT.maxTiles)
     local interiorWidth = math.max(24, width - pad * 2)
     if #items > 0 then
-      table.insert(children, buildLayout(items, interiorWidth, thumbHeight, 0))
+      table.insert(children, buildLayout(items, interiorWidth, previewHeight, 0))
     else
       -- Keep the empty workspace's preview area the same size as the others.
-      table.insert(children, ui.row({ height = thumbHeight, align = "center", justify = "center" }, {
+      table.insert(children, ui.row({ height = previewHeight, align = "center", justify = "center" }, {
         ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }),
       }))
     end
     if extra then
       table.insert(children, ui.label({ text = "+" .. tostring(#(ws.clients or {}) - hypr.LAYOUT.maxTiles), fontSize = 10, color = "secondary" }))
-      thumbHeight = thumbHeight + 16
+      previewHeight = previewHeight + 16
     end
     -- Spacer so the thumbnails do not sit flush against the card's bottom edge.
     table.insert(children, ui.spacer({ height = hypr.LAYOUT.cardSpacer }))
     -- No fixed minimum: the card is exactly as tall as its contents.
-    local cardHeight = pad * 2 + hypr.LAYOUT.headingHeight + thumbHeight + hypr.LAYOUT.cardSpacer + cardGap * (#children - 1)
+    local cardHeight = pad * 2 + hypr.LAYOUT.headingHeight + previewHeight + hypr.LAYOUT.cardSpacer + cardGap * (#children - 1)
     return ui.dropZone({
       key = "workspace-" .. tostring(ws.id),
       accepts = { "hypr-window" }, value = targetWorkspace,
@@ -305,37 +306,71 @@ function M.new()
     }, children), cardHeight
   end
 
-  render = function()
-    if not self.opened then return end
-    local configuredColumns = noctalia.getConfig("columns") or 5
-    -- The widget sizes the panel from the same metrics so the window hugs the
-    -- workspace previews.
+  -- Usable panel content area: everything the preview row is laid out into.
+  local function panelArea()
     local targetContent = self.panelHeight and math.max(0, self.panelHeight - hypr.LAYOUT.panelMargin) or nil
     local gridWidth = self.panelWidth and math.max(64, self.panelWidth - hypr.LAYOUT.panelInset) or nil
-    local metrics = hypr.panelLayout(self.visible, configuredColumns, targetContent, gridWidth)
-    local columns = metrics.columns
-    local gridGap = hypr.LAYOUT.gridGap
-    local grid = {}
-    for row = 1, metrics.rows do
-      local cards = {}
-      for column = 1, columns do
-        local index = (row - 1) * columns + column
-        local ws = self.visible[index]
-        if ws then
-          local card = workspaceCard(ws, index, metrics.cardWidth, metrics.cards[index])
-          table.insert(cards, card)
+    return targetContent, gridWidth
+  end
+
+  -- Workspace records for the preview window, sized to the panel.
+  local function refreshVisible()
+    self.workspaces = hypr.workspaces(self.snapshot, self.output,
+      noctalia.getConfig("show_empty"), noctalia.getConfig("show_special"))
+    self.maxOffset = math.max(0, #self.workspaces - hypr.LAYOUT.previewCount)
+    if self.offset > self.maxOffset then self.offset = self.maxOffset end
+    self.visible = hypr.window(self.workspaces, hypr.LAYOUT.previewCount, self.offset)
+    if self.selected > #self.visible then self.selected = math.max(1, #self.visible) end
+  end
+
+  -- Keep thumbnails flowing for exactly the workspaces on screen.
+  local function refreshCaptures()
+    local remaining = noctalia.getConfig("max_captures") or 12
+    local captures = {}
+    for _, ws in ipairs(self.visible) do
+      if remaining <= 0 then break end
+      local shown = 0
+      for _, client in ipairs(ws.clients or {}) do
+        if shown >= 9 or remaining <= 0 then break end
+        -- Floating windows are not drawn, so skip capturing them.
+        if client.floating ~= true then
+          captures[#captures + 1] = client
+          shown = shown + 1
+          remaining = remaining - 1
         end
       end
-      if #cards > 0 then
-        table.insert(grid, ui.row({ key = "row-" .. row, gap = gridGap, align = "start", justify = "center" }, cards))
-      end
     end
-    if #grid == 0 then
+    self.capture:update(captures, true)
+  end
+
+  -- Scroll the preview window by one workspace; no refetch needed.
+  local function scrollBy(delta)
+    local nextOffset = math.max(0, math.min(self.maxOffset or 0, self.offset + delta))
+    if nextOffset == self.offset then return end
+    self.offset = nextOffset
+    refreshVisible()
+    render()
+    refreshCaptures()
+  end
+
+  render = function()
+    if not self.opened then return end
+    local targetContent, gridWidth = panelArea()
+    -- One row, capped at the preview count; the chevrons scroll the window.
+    local metrics = hypr.panelLayout(self.visible, targetContent, gridWidth)
+    local gridGap = hypr.LAYOUT.gridGap
+    local cards = {}
+    for index, ws in ipairs(self.visible) do
+      cards[#cards + 1] = workspaceCard(ws, index, metrics.cardWidth, metrics.cards[index])
+    end
+    local grid = {}
+    if #cards > 0 then
+      table.insert(grid, ui.row({ key = "workspace-row", gap = gridGap, align = "start", justify = "center" }, cards))
+    else
       local message = #(self.snapshot.monitors or {}) == 0 and "panel.no_hyprland" or "panel.empty"
       table.insert(grid, ui.label({ text = noctalia.tr(message), color = "on_surface_variant" }))
     end
-    local capacity = (noctalia.getConfig("rows") or 2) * configuredColumns
-    -- Show the workspace ids actually on screen, not the raw page slots.
+    -- Show the workspace ids actually on screen, not the raw window slots.
     local rangeFirst, rangeLast
     for _, ws in ipairs(self.visible) do
       local id = tonumber(ws.id)
@@ -348,15 +383,15 @@ function M.new()
     if rangeFirst then
       rangeText = tostring(rangeFirst) .. "–" .. tostring(rangeLast)
     else
-      local pageFirst = self.page * capacity + 1
-      rangeText = tostring(pageFirst) .. "–" .. tostring(pageFirst + capacity - 1)
+      local first = self.offset + 1
+      rangeText = tostring(first) .. "–" .. tostring(first + math.max(0, #self.visible - 1))
     end
     local header = ui.row({ align = "center", gap = 6 }, {
       ui.glyph({ name = "layout-dashboard", size = 20, color = "primary" }),
       ui.label({ text = noctalia.tr("panel.title"), fontWeight = "bold", fontSize = 17, color = "on_surface", flexGrow = 1 }),
       ui.label({ text = rangeText, fontSize = 11, color = "on_surface_variant" }),
-      ui.button({ glyph = "chevron-left", controlSize = "sm", enabled = self.page > 0, tooltip = noctalia.tr("panel.previous"), onClick = function() self.page = math.max(0, self.page - 1); self:update() end }),
-      ui.button({ glyph = "chevron-right", controlSize = "sm", tooltip = noctalia.tr("panel.next"), onClick = function() self.page = self.page + 1; self:update() end }),
+      ui.button({ glyph = "chevron-left", controlSize = "sm", enabled = self.offset > 0, tooltip = noctalia.tr("panel.previous"), onClick = function() scrollBy(-1) end }),
+      ui.button({ glyph = "chevron-right", controlSize = "sm", enabled = self.offset < (self.maxOffset or 0), tooltip = noctalia.tr("panel.next"), onClick = function() scrollBy(1) end }),
       ui.button({ glyph = "refresh", controlSize = "sm", tooltip = noctalia.tr("panel.refresh"), onClick = function() self:update() end }),
       ui.button({ glyph = "close", controlSize = "sm", tooltip = noctalia.tr("panel.close"), onClick = function() panel.close() end }),
     })
@@ -392,28 +427,9 @@ function M.new()
       if not self.opened or generation ~= self.generation then return end
       self.fetching = false
       self.snapshot = snapshot
-      self.visible = hypr.visible(snapshot, self.output, noctalia.getConfig("rows") or 2,
-        noctalia.getConfig("columns") or 5, noctalia.getConfig("show_empty"),
-        noctalia.getConfig("show_special"), self.page)
-      if self.selected > #self.visible then self.selected = math.max(1, #self.visible) end
+      refreshVisible()
       render()
-      local remaining = noctalia.getConfig("max_captures") or 12
-      local captures = {}
-      local maxPerWorkspace = 9
-      for _, ws in ipairs(self.visible) do
-        if remaining <= 0 then break end
-        local shown = 0
-        for _, client in ipairs(ws.clients or {}) do
-          if shown >= maxPerWorkspace or remaining <= 0 then break end
-          -- Floating windows are not drawn, so skip capturing them.
-          if client.floating ~= true then
-            captures[#captures + 1] = client
-            shown = shown + 1
-            remaining = remaining - 1
-          end
-        end
-      end
-      self.capture:update(captures, true)
+      refreshCaptures()
     end)
   end
 
@@ -423,7 +439,7 @@ function M.new()
     self.fetching = false
     self.output = tostring(noctalia.state.get("overview_output") or "")
     if context and context ~= "" then self.output = context end
-    self.page = 0
+    self.offset = 0
     self.selected = 1
     self.selectedWindow = nil
     self.hoveredWindow = nil
@@ -443,15 +459,17 @@ function M.new()
     if not pressed then return end
     if chord == "Escape" then panel.close(); return end
     if #self.visible == 0 then return end
-    local columns = math.min(noctalia.getConfig("columns") or 5, 5)
     if chord == "Left" or chord == "h" then
       self.selected = math.max(1, self.selected - 1)
     elseif chord == "Right" or chord == "l" then
       self.selected = math.min(#self.visible, self.selected + 1)
     elseif chord == "Up" or chord == "k" then
-      self.selected = math.max(1, self.selected - columns)
+      -- Scroll the preview window back one workspace.
+      scrollBy(-1)
+      return
     elseif chord == "Down" or chord == "j" then
-      self.selected = math.min(#self.visible, self.selected + columns)
+      scrollBy(1)
+      return
     elseif chord == "Return" then
       activateWorkspace(self.visible[self.selected])
       return
@@ -466,9 +484,9 @@ function M.new()
     render()
   end
 
-  -- Defaults until the manifest is read; the async read re-renders if needed.
+  -- Defaults until the manifest is read; mirrors plugin.toml's overview panel.
   self.panelWidth = hypr.LAYOUT.gridWidth + hypr.LAYOUT.panelInset
-  self.panelHeight = 475
+  self.panelHeight = 300
   local directory = noctalia.pluginDir()
   if type(directory) == "string" and directory ~= "" then
     noctalia.runAsync({ "cat", directory .. "/plugin.toml" }, function(result)
@@ -476,7 +494,7 @@ function M.new()
       local width, height = parsePanelSize(result.stdout, "overview")
       if width then self.panelWidth = width end
       if height then self.panelHeight = height end
-      if self.opened then render() end
+      if self.opened then refreshVisible(); render() end
     end)
   end
 
