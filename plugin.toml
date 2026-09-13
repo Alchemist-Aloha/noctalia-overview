@@ -1,0 +1,97 @@
+id = "alchemistaloha/noctalia-overview"
+name = "Noctalia Overview"
+version = "0.1.0"
+plugin_api = 24
+author = "alchemistaloha"
+license = "MIT"
+description = "Hyprland workspace overview with live window thumbnails and a bar hover preview."
+tags = ["Hyprland", "Productivity"]
+icon = "layout-dashboard"
+dependencies = ["hyprctl", "grim"]
+
+[[setting]]
+key = "rows"
+type = "int"
+label_key = "settings.rows"
+default = 2
+min = 1
+max = 5
+
+[[setting]]
+key = "columns"
+type = "int"
+label_key = "settings.columns"
+default = 5
+min = 1
+max = 10
+
+[[setting]]
+key = "show_empty"
+type = "bool"
+label_key = "settings.show_empty"
+default = true
+
+[[setting]]
+key = "show_special"
+type = "bool"
+label_key = "settings.show_special"
+default = false
+
+[[setting]]
+key = "show_titles"
+type = "bool"
+label_key = "settings.show_titles"
+default = true
+
+[[setting]]
+key = "show_hover_preview"
+type = "bool"
+label_key = "settings.show_hover_preview"
+default = true
+
+[[setting]]
+key = "capture_interval_ms"
+type = "int"
+label_key = "settings.capture_interval"
+description_key = "settings.capture_interval_description"
+default = 1200
+min = 500
+max = 5000
+
+[[setting]]
+key = "max_captures"
+type = "int"
+label_key = "settings.max_captures"
+description_key = "settings.max_captures_description"
+default = 12
+min = 1
+max = 30
+
+[[widget]]
+id = "workspaces"
+entry = "widget.luau"
+
+[[shortcut]]
+id = "toggle"
+entry = "shortcut.luau"
+
+[[panel]]
+id = "preview"
+entry = "preview.luau"
+width = 740
+height = 420
+placement = "attached"
+position = "auto"
+open_near_click = true
+keyboard_focus = "none"
+dismiss_on_outside_click = false
+
+[[panel]]
+id = "overview"
+entry = "overview.luau"
+width = 1200
+height = 720
+placement = "floating"
+position = "center"
+keyboard_focus = "exclusive"
+capture_keys = ["Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
