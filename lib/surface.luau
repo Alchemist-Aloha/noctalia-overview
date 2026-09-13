@@ -314,7 +314,7 @@ function M.new()
     local inset = hypr.LAYOUT.panelPadding * 2
     local targetContent = self.panelHeight and math.max(0, self.panelHeight - inset) or nil
     local gridWidth = self.panelWidth
-      and math.max(64, self.panelWidth - inset - hypr.LAYOUT.bodyPad * 2) or nil
+      and math.max(64, self.panelWidth - inset - hypr.LAYOUT.bodyPad * 2 - hypr.LAYOUT.fitSlack) or nil
     return targetContent, gridWidth
   end
 

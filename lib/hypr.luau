@@ -95,6 +95,10 @@ local LAYOUT = {
     -- Inset the shell applies around a decorated panel (Style::panelPadding);
     -- the panel's configured size minus this on both sides is ours to lay out.
     panelPadding = 14,
+    -- Slack kept between the preview row and the scroll's clip edge. The shell
+    -- rounds the panel and content sizes to whole pixels, so a row sized to the
+    -- exact content width can still lose its last card to the clip.
+    fitSlack = 6,
 }
 
 Hypr.LAYOUT = LAYOUT
