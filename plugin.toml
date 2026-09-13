@@ -4,7 +4,7 @@ version = "0.1.0"
 plugin_api = 24
 author = "alchemistaloha"
 license = "MIT"
-description = "Hyprland workspace overview with live window thumbnails and a bar hover preview."
+description = "Hyprland workspace overview with live window thumbnails."
 tags = ["Hyprland", "Productivity"]
 icon = "layout-dashboard"
 dependencies = ["hyprctl", "grim"]
@@ -38,12 +38,6 @@ label_key = "settings.show_special"
 default = false
 
 [[setting]]
-key = "show_hover_preview"
-type = "bool"
-label_key = "settings.show_hover_preview"
-default = true
-
-[[setting]]
 key = "capture_interval_ms"
 type = "int"
 label_key = "settings.capture_interval"
@@ -69,107 +63,15 @@ entry = "widget.luau"
 id = "toggle"
 entry = "shortcut.luau"
 
+# Panel size: set the width/height you want here. The workspace previews adapt
+# to this size automatically, so no other size settings are needed.
 [[panel]]
 id = "overview"
 entry = "overview.luau"
 width = 840
-height = 475
+height = 300
 placement = "floating"
 position = "center"
 keyboard_focus = "exclusive"
 capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
 
-[[panel]]
-id = "overview-375"
-entry = "overview.luau"
-width = 840
-height = 375
-placement = "floating"
-position = "center"
-keyboard_focus = "exclusive"
-capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
-
-[[panel]]
-id = "overview-320"
-entry = "overview.luau"
-width = 840
-height = 320
-placement = "floating"
-position = "center"
-keyboard_focus = "exclusive"
-capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
-
-[[panel]]
-id = "overview-265"
-entry = "overview.luau"
-width = 840
-height = 265
-placement = "floating"
-position = "center"
-keyboard_focus = "exclusive"
-capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
-
-[[panel]]
-id = "overview-220"
-entry = "overview.luau"
-width = 840
-height = 220
-placement = "floating"
-position = "center"
-keyboard_focus = "exclusive"
-capture_keys = ["Escape", "Left", "Right", "Up", "Down", "h", "j", "k", "l", "Return", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
-
-[[panel]]
-id = "preview"
-entry = "preview.luau"
-width = 840
-height = 475
-placement = "attached"
-position = "auto"
-open_near_click = true
-keyboard_focus = "none"
-dismiss_on_outside_click = false
-
-[[panel]]
-id = "preview-375"
-entry = "preview.luau"
-width = 840
-height = 375
-placement = "attached"
-position = "auto"
-open_near_click = true
-keyboard_focus = "none"
-dismiss_on_outside_click = false
-
-[[panel]]
-id = "preview-320"
-entry = "preview.luau"
-width = 840
-height = 320
-placement = "attached"
-position = "auto"
-open_near_click = true
-keyboard_focus = "none"
-dismiss_on_outside_click = false
-
-[[panel]]
-id = "preview-265"
-entry = "preview.luau"
-width = 840
-height = 265
-placement = "attached"
-position = "auto"
-open_near_click = true
-keyboard_focus = "none"
-dismiss_on_outside_click = false
-
-[[panel]]
-id = "preview-220"
-entry = "preview.luau"
-width = 840
-height = 220
-placement = "attached"
-position = "auto"
-open_near_click = true
-keyboard_focus = "none"
-dismiss_on_outside_click = false

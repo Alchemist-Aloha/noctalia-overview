@@ -1,8 +1,8 @@
 # Noctalia Overview
 
-A Noctalia v5 Luau port of Hypr Overview. The `workspaces` bar widget is a single icon in the bar: hover it for a live window-thumbnail preview, or click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
+A Noctalia v5 Luau port of Hypr Overview. The `workspaces` bar widget is a single icon in the bar: click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
 
-Each workspace card shows a live thumbnail for every window, arranged to mirror the workspace's real tiling (side-by-side, stacked, master/stack, and so on) using each window's Hyprland geometry; floating or overlapping windows fall back to a compact grid. Cards are sized to the number of workspaces actually shown, so a monitor with two or three workspaces gets large thumbnails that fill the row instead of a sparse fixed-column grid. Window titles appear as tooltips rather than caption strips. The hover preview and the click overview use the same card scale and height buckets, so both open at the same size for a given monitor; each picks the smallest height variant that fits, then grows the card thumbnails to fill the panel so the previews use the whole window instead of leaving dead space at the bottom. This requires Hyprland's foreign-toplevel capture support and a `grim` build with `-T` (`grim -h` lists it). If a window cannot be captured, its application icon or name remains visible. The preview is read-only apart from clicking a workspace or window; the overview supports window-to-workspace drag and drop, keyboard workspace navigation, and workspace/window focus.
+Each workspace card shows a live thumbnail for every window, arranged to mirror the workspace's real tiling (side-by-side, stacked, master/stack, and so on) using each window's Hyprland geometry; floating windows are left out of the layout and overlapping windows fall back to a compact grid. Cards are sized to the number of workspaces actually shown, so a monitor with two or three workspaces gets large thumbnails that fill the row instead of a sparse fixed-column grid, and empty workspaces keep the same preview height. Window titles appear as tooltips rather than caption strips. The window size is a plain `width`/`height` pair on the `overview` panel in `plugin.toml`, and the cards grow to fill whatever you set. This requires Hyprland's foreign-toplevel capture support and a `grim` build with `-T` (`grim -h` lists it). If a window cannot be captured, its application icon or name remains visible. The overview supports window-to-workspace drag and drop, keyboard workspace navigation, and workspace/window focus.
 
 ## Install and use
 
@@ -26,13 +26,13 @@ Open the overview from a keybind or terminal with:
 noctalia msg panel-toggle alchemistaloha/noctalia-overview:overview
 ```
 
-The panels come in height variants: `overview` (475), `overview-375`, `overview-320`, `overview-265`, `overview-220`, plus the matching `preview-*` ids. The bar widget and the `toggle` shortcut read the monitor's workspaces and open the smallest variant that fits, so the window is sized to the previews and the hover and click panels match.
+Set the window size directly with the `width` and `height` on the `overview` `[[panel]]` block in `plugin.toml`; the thumbnails adapt automatically.
 
-For an on-screen hover preview, move the pointer over the plugin's `workspaces` widget in the bar. The built-in Noctalia `workspaces` widget cannot be extended by a plugin, so replace it with this widget if you want previews on workspace hover.
+For an on-screen preview, click the plugin's `workspaces` widget in the bar. The built-in Noctalia `workspaces` widget cannot be extended by a plugin, so replace it with this widget if you want thumbnails.
 
 ## Settings and controls
 
-Settings → Plugins → Noctalia Overview exposes rows, columns, empty and special workspaces, hover preview, capture interval, and a capture-count limit. The overview has previous/next page controls, drag-to-move windows, and a focus/floating action for a selected window. Arrow keys or H/J/K/L select a workspace; Enter opens it; number keys 1–0 jump to slots 1–10. Escape closes the panel.
+Settings → Plugins → Noctalia Overview exposes rows, columns, empty and special workspaces, capture interval, and a capture-count limit. The overview has previous/next page controls, drag-to-move windows, and a focus/floating action for a selected window. Arrow keys or H/J/K/L select a workspace; Enter opens it; number keys 1–0 jump to slots 1–10. Escape closes the panel.
 
 This v5 native panel cannot reproduce the v4 QML overlay's exact window geometry, shader effects, per-monitor full-screen surfaces, and retile visualization. The port keeps live window content and the core navigation/move behavior within the v5 declarative UI.
 

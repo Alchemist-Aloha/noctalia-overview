@@ -8,6 +8,28 @@ local function short(text, limit)
   return value
 end
 
+-- Read one panel's width/height from the plugin manifest so the preview fills
+-- whatever size is set there. Matches the `id`, then the next width/height in
+-- the same `[[panel]]` block.
+local function parsePanelSize(text, panelId)
+  local width, height, matched = nil, nil, false
+  for line in text:gmatch("[^\n]+") do
+    if line:match("^%s*%[%[") then
+      matched = false
+    else
+      local id = line:match('^%s*id%s*=%s*"([^"]+)"')
+      if id then matched = (id == panelId) end
+      if matched then
+        local w = line:match("^%s*width%s*=%s*(%d+)")
+        local h = line:match("^%s*height%s*=%s*(%d+)")
+        if w then width = tonumber(w) end
+        if h then height = tonumber(h) end
+      end
+    end
+  end
+  return width, height
+end
+
 -- Bounding box of a set of window rectangles ({ x, y, w, h }).
 local function bboxOf(items)
   local minX, minY, maxX, maxY = hypr.bboxOf(items)
@@ -54,10 +76,9 @@ local function findSplit(items)
   return best
 end
 
-function M.new(preview)
+function M.new()
   local tileGap = 3
   local self = {
-    preview = preview,
     opened = false,
     snapshot = { clients = {}, monitors = {}, workspaces = {} },
     output = "",
@@ -72,7 +93,7 @@ function M.new(preview)
   }
 
   local render
-  self.capture = hypr.newCaptureManager(preview and "hover" or "overview", function()
+  self.capture = hypr.newCaptureManager("overview", function()
     if self.opened then render() end
   end)
 
@@ -82,7 +103,7 @@ function M.new(preview)
       return noctalia.tr("panel.special") .. " " .. string.sub(name, 9)
     end
     if name ~= tostring(ws.id) and name ~= "" then
-      return tostring(ws.id) .. " · " .. short(name, preview and 11 or 18)
+      return tostring(ws.id) .. " · " .. short(name, 18)
     end
     return tostring(ws.id)
   end
@@ -153,15 +174,9 @@ function M.new(preview)
       end,
       onClick = function()
         self.selectedWindow = address
-        if preview then
-          hypr.dispatch("focuswindow", "address:" .. address)
-          panel.close()
-        else
-          render()
-        end
+        render()
       end,
     }, children)
-    if preview then return body end
     return ui.dragSource({
       key = "drag-" .. address,
       dragType = "hypr-window",
@@ -261,22 +276,19 @@ function M.new(preview)
     if #items > 0 then
       table.insert(children, buildLayout(items, interiorWidth, thumbHeight, 0))
     else
-      table.insert(children, ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }))
+      -- Keep the empty workspace's preview area the same size as the others.
+      table.insert(children, ui.row({ height = thumbHeight, align = "center", justify = "center" }, {
+        ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }),
+      }))
     end
     if extra then
       table.insert(children, ui.label({ text = "+" .. tostring(#(ws.clients or {}) - hypr.LAYOUT.maxTiles), fontSize = 10, color = "secondary" }))
       thumbHeight = thumbHeight + 16
     end
+    -- Spacer so the thumbnails do not sit flush against the card's bottom edge.
+    table.insert(children, ui.spacer({ height = hypr.LAYOUT.cardSpacer }))
     -- No fixed minimum: the card is exactly as tall as its contents.
-    local cardHeight = pad * 2 + hypr.LAYOUT.headingHeight + thumbHeight + cardGap * (#children - 1)
-    if preview then
-      return ui.column({
-        key = "workspace-" .. tostring(ws.id), width = width, height = cardHeight,
-        gap = cardGap, padding = pad, radius = 7,
-        fill = ws.active and "primary/0.18" or "surface_variant/0.7",
-        border = "outline/0.25", borderWidth = 1,
-      }, children), cardHeight
-    end
+    local cardHeight = pad * 2 + hypr.LAYOUT.headingHeight + thumbHeight + hypr.LAYOUT.cardSpacer + cardGap * (#children - 1)
     return ui.dropZone({
       key = "workspace-" .. tostring(ws.id),
       accepts = { "hypr-window" }, value = targetWorkspace,
@@ -298,7 +310,9 @@ function M.new(preview)
     local configuredColumns = noctalia.getConfig("columns") or 5
     -- The widget sizes the panel from the same metrics so the window hugs the
     -- workspace previews.
-    local metrics = hypr.panelLayout(self.visible, configuredColumns, preview, self.targetContent)
+    local targetContent = self.panelHeight and math.max(0, self.panelHeight - hypr.LAYOUT.panelMargin) or nil
+    local gridWidth = self.panelWidth and math.max(64, self.panelWidth - hypr.LAYOUT.panelInset) or nil
+    local metrics = hypr.panelLayout(self.visible, configuredColumns, targetContent, gridWidth)
     local columns = metrics.columns
     local gridGap = hypr.LAYOUT.gridGap
     local grid = {}
@@ -321,36 +335,49 @@ function M.new(preview)
       table.insert(grid, ui.label({ text = noctalia.tr(message), color = "on_surface_variant" }))
     end
     local capacity = (noctalia.getConfig("rows") or 2) * configuredColumns
-    local firstId = self.page * capacity + 1
+    -- Show the workspace ids actually on screen, not the raw page slots.
+    local rangeFirst, rangeLast
+    for _, ws in ipairs(self.visible) do
+      local id = tonumber(ws.id)
+      if id and id > 0 then
+        rangeFirst = rangeFirst and math.min(rangeFirst, id) or id
+        rangeLast = rangeLast and math.max(rangeLast, id) or id
+      end
+    end
+    local rangeText
+    if rangeFirst then
+      rangeText = tostring(rangeFirst) .. "–" .. tostring(rangeLast)
+    else
+      local pageFirst = self.page * capacity + 1
+      rangeText = tostring(pageFirst) .. "–" .. tostring(pageFirst + capacity - 1)
+    end
     local header = ui.row({ align = "center", gap = 6 }, {
       ui.glyph({ name = "layout-dashboard", size = 20, color = "primary" }),
-      ui.label({ text = noctalia.tr(preview and "panel.preview_title" or "panel.title"), fontWeight = "bold", fontSize = 17, color = "on_surface", flexGrow = 1 }),
-      ui.label({ text = tostring(firstId) .. "–" .. tostring(firstId + capacity - 1), fontSize = 11, color = "on_surface_variant" }),
+      ui.label({ text = noctalia.tr("panel.title"), fontWeight = "bold", fontSize = 17, color = "on_surface", flexGrow = 1 }),
+      ui.label({ text = rangeText, fontSize = 11, color = "on_surface_variant" }),
       ui.button({ glyph = "chevron-left", controlSize = "sm", enabled = self.page > 0, tooltip = noctalia.tr("panel.previous"), onClick = function() self.page = math.max(0, self.page - 1); self:update() end }),
       ui.button({ glyph = "chevron-right", controlSize = "sm", tooltip = noctalia.tr("panel.next"), onClick = function() self.page = self.page + 1; self:update() end }),
       ui.button({ glyph = "refresh", controlSize = "sm", tooltip = noctalia.tr("panel.refresh"), onClick = function() self:update() end }),
       ui.button({ glyph = "close", controlSize = "sm", tooltip = noctalia.tr("panel.close"), onClick = function() panel.close() end }),
     })
     local content = { header, ui.scroll({ key = "workspace-grid", flexGrow = 1, gap = gridGap }, grid) }
-    if not preview then
-      -- Reserve the same footer height in both states so the widget's
-      -- predicted content height stays valid when a window gets selected.
-      if self.selectedWindow then
-        table.insert(content, ui.row({ gap = 8 }, {
-          ui.button({ text = noctalia.tr("panel.focus"), glyph = "focus", onClick = function()
-            hypr.dispatch("focuswindow", "address:" .. self.selectedWindow)
-            panel.close()
-          end }),
-          ui.button({ text = noctalia.tr("panel.float"), glyph = "square", onClick = function()
-            hypr.dispatch("togglefloating", "address:" .. self.selectedWindow)
-            self:update()
-          end }),
-        }))
-      else
-        table.insert(content, ui.row({ align = "center" }, {
-          ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }),
-        }))
-      end
+    -- Reserve the same footer height in both states so the computed content
+    -- height stays valid when a window gets selected.
+    if self.selectedWindow then
+      table.insert(content, ui.row({ gap = 8 }, {
+        ui.button({ text = noctalia.tr("panel.focus"), glyph = "focus", onClick = function()
+          hypr.dispatch("focuswindow", "address:" .. self.selectedWindow)
+          panel.close()
+        end }),
+        ui.button({ text = noctalia.tr("panel.float"), glyph = "square", onClick = function()
+          hypr.dispatch("togglefloating", "address:" .. self.selectedWindow)
+          self:update()
+        end }),
+      }))
+    else
+      table.insert(content, ui.row({ align = "center" }, {
+        ui.label({ text = noctalia.tr("panel.keyboard_hint"), fontSize = 11, color = "on_surface_variant" }),
+      }))
     end
     -- The panel surface is a fixed bucket size; rendering the predicted
     -- content height keeps the grid flush under the header.
@@ -378,9 +405,12 @@ function M.new(preview)
         local shown = 0
         for _, client in ipairs(ws.clients or {}) do
           if shown >= maxPerWorkspace or remaining <= 0 then break end
-          captures[#captures + 1] = client
-          shown = shown + 1
-          remaining = remaining - 1
+          -- Floating windows are not drawn, so skip capturing them.
+          if client.floating ~= true then
+            captures[#captures + 1] = client
+            shown = shown + 1
+            remaining = remaining - 1
+          end
         end
       end
       self.capture:update(captures, true)
@@ -391,11 +421,8 @@ function M.new(preview)
     self.generation = self.generation + 1
     self.opened = true
     self.fetching = false
-    self.output = tostring(noctalia.state.get(preview and "hover_output" or "overview_output") or "")
+    self.output = tostring(noctalia.state.get("overview_output") or "")
     if context and context ~= "" then self.output = context end
-    self.targetContent = tonumber(noctalia.state.get(preview and "preview_content" or "overview_content")) or nil
-    -- Consume it so a direct `panel-open` cannot reuse a stale height.
-    noctalia.state.set(preview and "preview_content" or "overview_content", "")
     self.page = 0
     self.selected = 1
     self.selectedWindow = nil
@@ -413,7 +440,7 @@ function M.new(preview)
   end
 
   function self:key(chord, pressed)
-    if preview or not pressed then return end
+    if not pressed then return end
     if chord == "Escape" then panel.close(); return end
     if #self.visible == 0 then return end
     local columns = math.min(noctalia.getConfig("columns") or 5, 5)
@@ -437,6 +464,20 @@ function M.new(preview)
       end
     end
     render()
+  end
+
+  -- Defaults until the manifest is read; the async read re-renders if needed.
+  self.panelWidth = hypr.LAYOUT.gridWidth + hypr.LAYOUT.panelInset
+  self.panelHeight = 475
+  local directory = noctalia.pluginDir()
+  if type(directory) == "string" and directory ~= "" then
+    noctalia.runAsync({ "cat", directory .. "/plugin.toml" }, function(result)
+      if result.exitCode ~= 0 or type(result.stdout) ~= "string" then return end
+      local width, height = parsePanelSize(result.stdout, "overview")
+      if width then self.panelWidth = width end
+      if height then self.panelHeight = height end
+      if self.opened then render() end
+    end)
   end
 
   return self

@@ -64,15 +64,15 @@ local function report(callback, ...)
 end
 
 -- Workspace-card grid metrics. The panel renderer and the bar widget both use
--- these so the widget can pick a panel variant that fits before it opens.
--- 784/389 = the previous overview grid scaled by 0.7, so the click panel now
--- matches the hover preview layout.
+-- these so the preview adapts to whatever the panel's configured size is.
 local LAYOUT = {
+    -- Fallback grid width when the panel size cannot be read.
     gridWidth = 784,
     gridGap = 6,
-    maxCardWidth = 389,
     cardPad = 6,
     cardGap = 4,
+    -- Breathing room between the window thumbnails and the card's bottom edge.
+    cardSpacer = 12,
     minThumbHeight = 52,
     maxThumbHeight = 300,
     headingHeight = 22,
@@ -85,18 +85,15 @@ local LAYOUT = {
     scrollGap = 8,
     footerHeight = 32,
     minContentHeight = 180,
-    -- Slack left when growing the cards to fill a panel bucket, covering the
+    -- Slack left when growing the cards to fill the panel, covering the
     -- difference between the estimated chrome and the rendered header/footer.
     fillInset = 16,
+    -- Insets from the panel's configured size to the usable content area.
+    panelInset = 56,
+    panelMargin = 24,
 }
 
 Hypr.LAYOUT = LAYOUT
-
--- Panel size buckets (manifest heights, +10% vertical room). The widget picks
--- the smallest bucket that fits the computed content so the window hugs the
--- workspace previews without clipping them.
-Hypr.PANEL_BUCKETS = { 220, 265, 320, 375, 475 }
-Hypr.BASE_PANEL_HEIGHT = 475
 
 -- Bounding box of { x, y, w, h } rectangles; nil when the list is empty.
 function Hypr.bboxOf(items)
@@ -116,15 +113,19 @@ end
 function Hypr.windowItems(record)
     local items = {}
     for _, client in ipairs(record.clients or {}) do
-        local at = client.at or { 0, 0 }
-        local size = client.size or { 1280, 720 }
-        items[#items + 1] = {
-            client = client,
-            x = tonumber(at[1]) or 0,
-            y = tonumber(at[2]) or 0,
-            w = math.max(1, tonumber(size[1]) or 1280),
-            h = math.max(1, tonumber(size[2]) or 720),
-        }
+        -- Floating windows overlap the tiling; leave them out of the preview
+        -- layout so it mirrors the workspace's tiles.
+        if client.floating ~= true then
+            local at = client.at or { 0, 0 }
+            local size = client.size or { 1280, 720 }
+            items[#items + 1] = {
+                client = client,
+                x = tonumber(at[1]) or 0,
+                y = tonumber(at[2]) or 0,
+                w = math.max(1, tonumber(size[1]) or 1280),
+                h = math.max(1, tonumber(size[2]) or 720),
+            }
+        end
     end
     if #items > LAYOUT.maxTiles then
         table.sort(items, function(a, b) return a.w * a.h > b.w * b.h end)
@@ -149,37 +150,47 @@ end
 -- Grid metrics for a set of visible workspace records: column count, card
 -- width, per-card thumbnail heights and the content height needed to host
 -- everything without scrolling.
-function Hypr.panelLayout(visible, configuredColumns, preview, targetContent)
+function Hypr.panelLayout(visible, configuredColumns, targetContent, gridWidth)
     visible = visible or {}
+    gridWidth = math.max(64, numberOr(gridWidth, LAYOUT.gridWidth))
     local count = #visible
     local columns = math.min(math.max(1, numberOr(configuredColumns, 5)), math.max(1, count))
-    local available = math.max(16, LAYOUT.gridWidth - LAYOUT.gridGap * (columns - 1))
-    local cardWidth = math.min(LAYOUT.maxCardWidth, math.floor(available / columns))
+    local available = math.max(16, gridWidth - LAYOUT.gridGap * (columns - 1))
+    local cardWidth = math.max(32, math.floor(available / columns))
     local interiorWidth = math.max(24, cardWidth - LAYOUT.cardPad * 2)
     local cards = {}
     local maxCardHeight = 0
-    for index, record in ipairs(visible) do
+    local function chromeHeight(extra)
+        -- heading + preview + optional "+N" label + bottom spacer + gaps between them
+        local children = extra and 4 or 3
+        return LAYOUT.cardPad * 2 + LAYOUT.headingHeight + LAYOUT.cardSpacer
+            + LAYOUT.cardGap * (children - 1)
+    end
+    for _, record in ipairs(visible) do
         local thumb = Hypr.thumbHeight(record, interiorWidth)
         local extra = #(record.clients or {}) > LAYOUT.maxTiles
         if thumb == nil then thumb = 16 end
-        if extra then thumb = thumb + 16 end
-        local children = extra and 3 or 2
-        local cardHeight = LAYOUT.cardPad * 2 + LAYOUT.headingHeight + thumb + LAYOUT.cardGap * (children - 1)
+        local height = chromeHeight(extra) + thumb + (extra and 16 or 0)
+        if height > maxCardHeight then maxCardHeight = height end
+    end
+    -- Every card gets the same preview-section height so an empty workspace
+    -- matches the occupied ones instead of collapsing to a thin strip.
+    for index, record in ipairs(visible) do
+        local extra = #(record.clients or {}) > LAYOUT.maxTiles
+        local thumb = maxCardHeight - chromeHeight(extra) - (extra and 16 or 0)
         cards[index] = {
-            thumbHeight = thumb - (extra and 16 or 0),
+            thumbHeight = math.max(LAYOUT.minThumbHeight, thumb),
             extra = extra,
         }
-        if cardHeight > maxCardHeight then maxCardHeight = cardHeight end
     end
     local rows = math.ceil(math.max(1, count) / columns)
     local gridHeight = count > 0 and (rows * maxCardHeight + (rows - 1) * LAYOUT.gridGap) or 0
-    local footer = preview and 0 or LAYOUT.footerHeight
+    local footer = LAYOUT.footerHeight
     local contentHeight = LAYOUT.bodyPad * 2 + LAYOUT.headerHeight + gridHeight
         + (gridHeight > 0 and LAYOUT.scrollGap or 0)
         + (footer > 0 and (LAYOUT.scrollGap + footer) or 0)
-    -- `targetContent` is the panel bucket the widget selected. Grow the
-    -- thumbnail area (not the bottom margin) to fill that height so the
-    -- previews use the whole window.
+    -- `targetContent` is the panel's usable height. Grow the thumbnail area
+    -- (not the bottom margin) to fill it so the previews use the whole window.
     if targetContent and targetContent > contentHeight and count > 0 then
         local extra = targetContent - contentHeight - LAYOUT.fillInset
         if extra > 0 then
@@ -197,33 +208,6 @@ function Hypr.panelLayout(visible, configuredColumns, preview, targetContent)
         cards = cards,
         contentHeight = math.max(LAYOUT.minContentHeight, contentHeight),
     }
-end
-
--- Smallest panel bucket that can host the given content height.
-function Hypr.pickBucket(contentHeight)
-    for _, bucket in ipairs(Hypr.PANEL_BUCKETS) do
-        if contentHeight <= bucket - 24 then
-            return bucket
-        end
-    end
-    return Hypr.PANEL_BUCKETS[#Hypr.PANEL_BUCKETS]
-end
-
--- Visible workspaces on one output plus the panel bucket that fits them and
--- the content height the bucket provides.
-function Hypr.pickPanel(snapshot, output, rows, columns, showEmpty, showSpecial, preview)
-    local visible = Hypr.visible(snapshot, output, rows, columns, showEmpty, showSpecial, 0)
-    local metrics = Hypr.panelLayout(visible, columns, preview)
-    local bucket = Hypr.pickBucket(metrics.contentHeight)
-    return bucket, bucket - 24
-end
-
--- Map a bucket to a panel entry id; the largest bucket uses the base id.
-function Hypr.bucketId(base, bucket)
-    if bucket == Hypr.BASE_PANEL_HEIGHT then
-        return base
-    end
-    return base .. "-" .. tostring(bucket)
 end
 
 -- Run `hyprctl -j ...` and decode its stdout asynchronously.
@@ -530,16 +514,13 @@ function Hypr.visible(snapshot, outputName, rows, columns, showEmpty, showSpecia
             byId[record.id] = record
         end
     end
+    -- Only real workspaces: an empty slot for a workspace that does not exist
+    -- (or belongs to another monitor) would show phantom entries in the grid.
     local result = {}
     for id = first, last do
         local record = byId[id]
         if record then
             result[#result + 1] = record
-        elseif showEmpty then
-            result[#result + 1] = {
-                id = id, name = tostring(id), monitor = outputKey,
-                clients = {}, active = false, special = false, workspace = nil,
-            }
         end
     end
     if showSpecial then

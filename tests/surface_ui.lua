@@ -4,7 +4,7 @@ local function node(kind, props, children)
 end
 
 local ui = {}
-for _, kind in ipairs({ "row", "column", "scroll", "button", "label", "glyph", "image", "dragSource", "dropZone" }) do
+for _, kind in ipairs({ "row", "column", "scroll", "button", "label", "glyph", "image", "dragSource", "dropZone", "spacer" }) do
   ui[kind] = function(props, children) return node(kind, props, children) end
 end
 
@@ -57,11 +57,12 @@ local env = setmetatable({
     appIconPath = function() return nil end,
     state = { get = function() return "" end, set = function() end },
     setUpdateInterval = function() end,
+    pluginDir = function() return nil end,
   },
   panel = { render = function(tree) rendered = tree end, close = function() end },
 }, { __index = _G })
 
-local surface = assert(loadfile("lib/surface.luau", "t", env))().new(false)
+local surface = assert(loadfile("lib/surface.luau", "t", env))().new()
 surface:open("")
 assert(rendered.kind == "column", "panel header and footer should stay outside scroll")
 assert(rendered.children[2].kind == "scroll", "workspace grid should scroll independently")
@@ -85,17 +86,51 @@ surface:key("Down", true)
 assert(rendered.children[2].children[2].children[1].props.borderWidth == 2, "keyboard movement should match displayed columns")
 surface:key("Escape", true)
 
-local preview = assert(loadfile("lib/surface.luau", "t", env))().new(true)
-preview:open("")
-assert(#rendered.children[2].children == 2, "hover preview should reflow to five cards per row")
-assert(rendered.children[2].children[1].children[1].props.height == 116, "preview cards should be 30% smaller than the overview")
-
 -- Fewer workspaces than configured columns should widen the cards to fill the row.
 visible = { visible[1], visible[2] }
-local adaptive = assert(loadfile("lib/surface.luau", "t", env))().new(false)
+local adaptive = assert(loadfile("lib/surface.luau", "t", env))().new()
 adaptive:open("")
 assert(#rendered.children[2].children == 1 and #rendered.children[2].children[1].children == 2,
   "two workspaces should lay out as two columns")
 assert(rendered.children[2].children[1].children[1].props.width > 205,
   "fewer workspaces should get larger cards")
+
+-- Hypr.visible must not invent workspace slots for other monitors.
+local wsSnapshot = {
+  monitors = {
+    { id = 0, name = "TEST-1", activeWorkspace = { id = 4 } },
+    { id = 1, name = "OTHER", activeWorkspace = { id = 1 } },
+  },
+  workspaces = {
+    { id = 1, name = "1", monitor = "OTHER", monitorID = 1, windows = 1 },
+    { id = 4, name = "4", monitor = "TEST-1", monitorID = 0, windows = 1 },
+    { id = 5, name = "5", monitor = "TEST-1", monitorID = 0, windows = 1 },
+    { id = 6, name = "6", monitor = "TEST-1", monitorID = 0, windows = 0 },
+  },
+  clients = {
+    { address = "0x1", workspace = { id = 4, name = "4" }, monitor = 0 },
+    { address = "0x2", workspace = { id = 5, name = "5" }, monitor = 0 },
+    { address = "0x3", workspace = { id = 1, name = "1" }, monitor = 1 },
+  },
+}
+local withoutEmpty = realHypr.visible(wsSnapshot, "TEST-1", 2, 5, false, false, 0)
+assert(#withoutEmpty == 2, "show_empty=false should hide the monitor's empty workspace")
+local withEmpty = realHypr.visible(wsSnapshot, "TEST-1", 2, 5, true, false, 0)
+assert(#withEmpty == 3, "show_empty should add only the monitor's own existing workspaces")
+assert(withEmpty[1].id == 4 and withEmpty[3].id == 6, "only this monitor's workspaces should appear")
+
+-- Floating windows are ignored by the preview layout.
+local floatItems = realHypr.windowItems({ clients = {
+  { address = "0xt1", floating = false, at = { 0, 0 }, size = { 960, 1080 } },
+  { address = "0xt2", floating = true, at = { 100, 100 }, size = { 800, 600 } },
+} })
+assert(#floatItems == 1 and floatItems[1].client.address == "0xt1", "floating windows should be ignored")
+
+-- Empty workspaces should get the same preview height as occupied ones.
+local mixed = realHypr.panelLayout({
+  { id = 1, clients = { { address = "0xm1", floating = false, at = { 0, 0 }, size = { 1920, 1080 } } } },
+  { id = 2, clients = {} },
+}, 5, false)
+assert(mixed.cards[1].thumbHeight == mixed.cards[2].thumbHeight,
+  "empty workspaces should match the preview height of occupied ones")
 print("surface UI checks passed")

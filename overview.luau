@@ -1,5 +1,5 @@
 --!nonstrict
-local surface = require("./lib/surface.luau").new(false)
+local surface = require("./lib/surface.luau").new()
 
 function onOpen(context)
   noctalia.state.set("overview_open", true)
