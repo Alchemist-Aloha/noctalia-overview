@@ -1,11 +1,11 @@
 id = "alchemistaloha/noctalia-overview"
 name = "Noctalia Overview"
-version = "0.1.0"
+version = "1.0.0"
 plugin_api = 24
 author = "alchemistaloha"
 license = "MIT"
 description = "Hyprland workspace overview with live window thumbnails."
-tags = ["Hyprland", "Productivity"]
+tags = ["hyprland", "productivity"]
 icon = "layout-dashboard"
 dependencies = ["hyprctl", "grim"]
 

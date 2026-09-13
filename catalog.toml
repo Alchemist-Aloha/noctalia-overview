@@ -1,0 +1,14 @@
+# Noctalia plugin source catalog.
+# Keep one row per top-level plugin directory.
+
+[[plugin]]
+id = "alchemistaloha/noctalia-overview"
+name = "Noctalia Overview"
+version = "1.0.0"
+author = "alchemistaloha"
+license = "MIT"
+icon = "layout-dashboard"
+description = "Hyprland workspace overview with live window thumbnails."
+plugin_api = 24
+tags = ["hyprland", "productivity"]
+dependencies = ["hyprctl", "grim"]
