@@ -1,6 +1,6 @@
 # Noctalia Overview
 
-A Noctalia v5 Luau port of Hypr Overview. The `workspaces` bar widget is a single icon in the bar: click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
+A Noctalia v5 Luau port of (Hypr Overview)[https://github.com/anthonyhab/noctalia-plugins/tree/main/hypr-overview]. The `workspaces` bar widget is a single icon in the bar: click it to open the interactive overview. The `toggle` control-center shortcut opens the same overview.
 
 Each workspace card shows a live thumbnail for every window, arranged to mirror the workspace's real tiling (side-by-side, stacked, master/stack, and so on) using each window's Hyprland geometry; floating windows are left out of the layout and overlapping windows fall back to a compact grid. The overview supports window-to-workspace drag and drop, keyboard workspace navigation, and workspace/window focus.
 
