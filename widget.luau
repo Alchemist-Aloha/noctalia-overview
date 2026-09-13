@@ -36,13 +36,15 @@ local function currentOutput()
   return noctalia.focusedOutputName()
 end
 
-local function render()
+local function render(output)
+  -- `output` is captured during the synchronous timer/input context because
+  -- barWidget.outputName() returns nil inside runAsync callbacks.
+  output = output or currentOutput()
   local columns = noctalia.getConfig("columns") or 5
   local children = {}
   local ids = {}
   local seen = {}
   local otherOutputIds = {}
-  local output = currentOutput()
   local showSpecial = noctalia.getConfig("show_special") == true
   local showExtraEmpty = noctalia.getConfig("show_empty_bar") == true
   local anchor = active > 0 and output == activeOutput and active or nil
@@ -112,11 +114,12 @@ end
 
 function update()
   if busy then return end
+  local output = currentOutput()
   busy = true
   local accepted = noctalia.runAsync({ "hyprctl", "-j", "monitors" }, function(result)
     if result.exitCode == 0 then
       local monitors = noctalia.json.decode(result.stdout) or {}
-      local name = currentOutput()
+      local name = output
       local nextMonitorNames = {}
       activeOutput = nil
       for _, monitor in ipairs(monitors) do
@@ -129,7 +132,7 @@ function update()
       monitorNames = nextMonitorNames
     end
     busy = false
-    render()
+    render(output)
   end)
   if not accepted then busy = false end
   noctalia.runAsync({ "hyprctl", "-j", "workspaces" }, function(result)
@@ -142,7 +145,7 @@ function update()
     end
     workspaces = list
     windows = nextWindows
-    render()
+    render(output)
   end)
 end
 

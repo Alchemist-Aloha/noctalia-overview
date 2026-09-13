@@ -31,18 +31,28 @@ local state = {
     if watchers[key] then watchers[key](value) end
   end,
 }
+-- Noctalia's bar binding is only available during synchronous widget callbacks;
+-- inside runAsync callbacks outputName() returns nil. Reproduce that here so the
+-- widget is forced to capture its output before starting an async query.
+local inAsync = false
 local env = setmetatable({
   ui = ui,
   require = function() return { dispatch = function(_, target) dispatched[#dispatched + 1] = target end } end,
   barWidget = {
     isVertical = function() return false end,
-    outputName = function() return output end,
+    outputName = function()
+      if inAsync then return nil end
+      return output
+    end,
     render = function(value) tree = value end,
     setTooltip = function() end,
   },
   noctalia = {
     getConfig = function(key) return config[key] end,
-    focusedOutputName = function() return "TEST-1" end,
+    focusedOutputName = function()
+      if inAsync then return nil end
+      return "TEST-1"
+    end,
     tr = function(key) return key end,
     setUpdateInterval = function() end,
     json = { decode = function(value)
@@ -54,7 +64,10 @@ local env = setmetatable({
     end },
     runAsync = function(args, callback)
       assert(args[1] == "hyprctl" and args[2] == "-j", "hyprctl needs the JSON flag before its command")
-      callback({ exitCode = 0, stdout = args[3] })
+      inAsync = true
+      local ok, err = pcall(callback, { exitCode = 0, stdout = args[3] })
+      inAsync = false
+      assert(ok, err)
       return true
     end,
     state = state,

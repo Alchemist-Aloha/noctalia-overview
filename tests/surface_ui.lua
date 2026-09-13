@@ -59,13 +59,13 @@ assert(rendered.children[2].kind == "scroll", "workspace grid should scroll inde
 assert(#rendered.children[2].children == 2, "ten configured columns should reflow to five per row")
 assert(rendered.children[2].children[1].children[1].props.fill == "primary/0.18", "active workspace should stand out")
 assert(rendered.children[2].children[1].children[1].props.borderWidth == 2, "keyboard selection should have a border")
-local featured = rendered.children[2].children[1].children[1].children[4].children[1]
-featured.props.onHover(true)
-featured = rendered.children[2].children[1].children[1].children[4].children[1]
-assert(featured.props.fill == "primary/0.10", "hovered window should be highlighted")
+local firstWindow = rendered.children[2].children[1].children[1].children[4].children[1].children[1]
+firstWindow.props.onHover(true)
+firstWindow = rendered.children[2].children[1].children[1].children[4].children[1].children[1]
+assert(firstWindow.props.fill == "primary/0.10", "hovered window should be highlighted")
 local captureCount = 0
 for _ in pairs(captured) do captureCount = captureCount + 1 end
-assert(captureCount == 10, "capture budget should cover one featured window per workspace")
+assert(captureCount == 12, "capture budget should cover every window shown in a workspace")
 surface:key("Down", true)
 assert(rendered.children[2].children[2].children[1].props.borderWidth == 2, "keyboard movement should match displayed columns")
 surface:key("Escape", true)
@@ -73,5 +73,5 @@ surface:key("Escape", true)
 local preview = assert(loadfile("lib/surface.luau", "t", env))().new(true)
 preview:open("")
 assert(#rendered.children[2].children == 3, "hover preview should reflow to four cards per row")
-assert(rendered.children[2].children[1].children[1].props.height == 166, "preview cards should fit compact contents")
+assert(rendered.children[2].children[1].children[1].props.height == 172, "preview cards should fit every window thumbnail")
 print("surface UI checks passed")

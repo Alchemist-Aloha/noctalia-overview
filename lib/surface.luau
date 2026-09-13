@@ -63,47 +63,46 @@ function M.new(preview)
     return ui.glyph({ name = "app-window", size = size, color = "on_surface_variant" })
   end
 
-  local function windowNode(client, width, featured)
+  local function windowNode(client, width, imageHeight)
     local address = tostring(client.address or "")
-    local title = short(client.title or client.class or address, preview and 20 or 34)
     local image = self.capture:path(client)
     local children = {}
-    if image and featured then
+    if image then
       table.insert(children, ui.image({
         key = "image-" .. address,
         path = image,
-        width = width - 32,
-        height = preview and 62 or 104,
+        width = width,
+        height = imageHeight,
         fit = "contain",
         radius = 5,
         border = "outline/0.25",
         borderWidth = 1,
       }))
-    elseif featured then
+    else
       table.insert(children, ui.row({
-        width = width - 32, height = preview and 62 or 104,
+        width = width, height = imageHeight,
         fill = "surface_variant/0.6", radius = 5,
         align = "center", justify = "center",
-      }, { clientIcon(client, 28) }))
+      }, { clientIcon(client, math.min(24, imageHeight)) }))
     end
     if noctalia.getConfig("show_titles") then
-      local caption = { clientIcon(client, 14), ui.label({ text = title, maxLines = 1,
-        maxWidth = width - 50, fontSize = 11, flexGrow = 1 }) }
+      local caption = { clientIcon(client, 13), ui.label({ text = short(client.title or client.class or address, preview and 14 or 18),
+        maxLines = 1, maxWidth = width - 22, fontSize = 10, flexGrow = 1 }) }
       local flags = (client.floating and " ◇" or "") .. (((tonumber(client.fullscreen) or 0) ~= 0) and " ⛶" or "") .. (client.urgent and " !" or "")
       if flags ~= "" then
-        table.insert(caption, ui.label({ text = flags, color = client.urgent and "error" or "secondary", fontSize = 10 }))
+        table.insert(caption, ui.label({ text = flags, color = client.urgent and "error" or "secondary", fontSize = 9 }))
       end
-      table.insert(children, ui.row({ gap = 4, align = "center" }, caption))
-    elseif not featured then
-      table.insert(children, ui.row({ gap = 4, align = "center" }, {
-        clientIcon(client, 14),
-        ui.label({ text = short(client.class or address, 22), fontSize = 11, color = "on_surface_variant" }),
+      table.insert(children, ui.row({ gap = 3, align = "center" }, caption))
+    else
+      table.insert(children, ui.row({ gap = 3, align = "center" }, {
+        clientIcon(client, 13),
+        ui.label({ text = short(client.class or address, 16), fontSize = 10, color = "on_surface_variant" }),
       }))
     end
     local body = ui.column({
       key = "window-" .. address,
       gap = 3,
-      padding = 4,
+      padding = 3,
       fill = self.selectedWindow == address and "primary/0.18"
         or (self.hoveredWindow == address and "primary/0.10" or "surface_variant/0.45"),
       radius = 5,
@@ -156,20 +155,40 @@ function M.new(preview)
     if ws.monitor and ws.monitor ~= "" and not preview then
       table.insert(children, ui.label({ text = short(ws.monitor, 20), fontSize = 10, color = "on_surface_variant" }))
     end
-    local shown = 0
-    for _, client in ipairs(ws.clients or {}) do
-      if shown >= (preview and 2 or 3) then break end
-      table.insert(children, windowNode(client, width, shown == 0))
-      shown = shown + 1
+    local clients = ws.clients or {}
+    -- Lay every window out as a thumbnail tile so a workspace reveals all of
+    -- its windows instead of only the first one.
+    local maxShown = 4
+    local tileColumns = 2
+    local tileGap = 6
+    local pad = preview and 7 or 8
+    local shown = math.min(#clients, maxShown)
+    local rows = math.ceil(shown / tileColumns)
+    local tileWidth = math.floor((width - pad * 2 - tileGap * (tileColumns - 1)) / tileColumns)
+    local tileImageHeight = math.floor(tileWidth * 9 / 16)
+    local tileHeight = tileImageHeight + 23
+    for row = 0, rows - 1 do
+      local tiles = {}
+      for column = 1, tileColumns do
+        local client = clients[row * tileColumns + column]
+        if client then table.insert(tiles, windowNode(client, tileWidth, tileImageHeight)) end
+      end
+      if #tiles > 0 then table.insert(children, ui.row({ gap = tileGap, align = "start" }, tiles)) end
     end
     if shown == 0 then
       table.insert(children, ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant", fontSize = 11 }))
-    elseif #(ws.clients or {}) > shown then
-      table.insert(children, ui.label({ text = "+" .. tostring(#ws.clients - shown), fontSize = 11, color = "secondary" }))
+    elseif #clients > shown then
+      table.insert(children, ui.label({ text = "+" .. tostring(#clients - shown), fontSize = 11, color = "secondary" }))
     end
+    local labelCount = 0
+    if ws.active and not preview then labelCount = labelCount + 1 end
+    if ws.monitor and ws.monitor ~= "" and not preview then labelCount = labelCount + 1 end
+    local trailing = (shown == 0 or #clients > shown) and 16 or 0
+    local cardHeight = math.max(preview and 166 or 250,
+      pad * 2 + 22 + labelCount * 16 + rows * tileHeight + trailing + 5 * (#children - 1))
     if preview then
       return ui.column({
-        key = "workspace-" .. tostring(ws.id), width = width, height = 166,
+        key = "workspace-" .. tostring(ws.id), width = width, height = cardHeight,
         gap = 5, padding = 7, radius = 7,
         fill = ws.active and "primary/0.18" or "surface_variant/0.7",
         border = "outline/0.25", borderWidth = 1,
@@ -183,7 +202,7 @@ function M.new(preview)
         hypr.dispatch("movetoworkspace", target .. ",address:" .. address)
         self:update()
       end,
-      direction = "column", width = width, height = 250,
+      direction = "column", width = width, height = cardHeight,
       gap = 5, padding = 8, radius = 8,
       fill = ws.active and "primary/0.18" or "surface_variant/0.7",
       border = index == self.selected and "primary" or "outline/0.25",
@@ -257,14 +276,16 @@ function M.new(preview)
       render()
       local remaining = noctalia.getConfig("max_captures") or 12
       local captures = {}
+      local maxPerWorkspace = 4
       for _, ws in ipairs(self.visible) do
         if remaining <= 0 then break end
-        local client = (ws.clients or {})[1]
-        if client then
+        local shown = 0
+        for _, client in ipairs(ws.clients or {}) do
+          if shown >= maxPerWorkspace or remaining <= 0 then break end
           captures[#captures + 1] = client
+          shown = shown + 1
           remaining = remaining - 1
         end
-        if remaining <= 0 then break end
       end
       self.capture:update(captures, true)
     end)
