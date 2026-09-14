@@ -33,7 +33,15 @@ local captured = {}
 local realHypr = assert(loadfile("lib/hypr.luau", "t", setmetatable({}, { __index = _G })))()
 
 local hypr = setmetatable({
-  fetch = function(callback) callback({ monitors = { {} }, clients = {}, workspaces = {} }) end,
+  fetch = function(callback)
+    callback({
+      monitors = {
+        { name = "TEST-1", x = 0, y = 0, width = 1920, height = 1080, focused = true },
+        { name = "TEST-2", x = 1920, y = 0, width = 1920, height = 1080, focused = false },
+      },
+      clients = {}, workspaces = {}, cursor = { x = 2500, y = 400 },
+    })
+  end,
   -- Hand the synthetic workspaces to the real window slicer.
   workspaces = function() return visible end,
   dispatch = function() end,
@@ -50,6 +58,8 @@ local hypr = setmetatable({
   end,
 }, { __index = realHypr })
 
+local stateValues = {}
+
 local env = setmetatable({
   ui = ui,
   require = function() return hypr end,
@@ -57,7 +67,10 @@ local env = setmetatable({
     getConfig = function(key) return config[key] end,
     tr = function(key) return key end,
     appIconPath = function() return nil end,
-    state = { get = function() return "" end, set = function() end },
+    state = {
+      get = function(key) return stateValues[key] end,
+      set = function(key, value) stateValues[key] = value end,
+    },
     setUpdateInterval = function() end,
     pluginDir = function() return nil end,
   },
@@ -105,6 +118,25 @@ assert(threeCards.cardWidth * 3 + 2 * realHypr.LAYOUT.gridGap <= 850,
 assert(threeCards.cardWidth == realHypr.panelLayout(visible, 312, 850).cardWidth,
   "every card should get one fixed size")
 assert(rendered.children[2].props.justify == "center", "the preview row should stay centered")
+
+-- The monitor under the pointer wins, then the focused one; an explicit open
+-- context overrides both.
+local monitors = {
+  { name = "A", x = 0, y = 0, width = 1920, height = 1080 },
+  { name = "B", x = 1920, y = 0, width = 1920, height = 1080, focused = true },
+}
+assert(realHypr.activeOutput({ monitors = monitors, cursor = { x = 2500, y = 400 } }) == "B",
+  "the pointer's monitor should win")
+assert(realHypr.activeOutput({ monitors = monitors, cursor = { x = 100, y = 100 } }) == "A",
+  "a pointer on another monitor should pick that one")
+assert(realHypr.activeOutput({ monitors = monitors }) == "B",
+  "without a cursor position the focused monitor should win")
+local byKeybind = assert(loadfile("lib/surface.luau", "t", env))().new()
+byKeybind:open("")
+assert(byKeybind.output == "TEST-2", "a keybind open should follow the pointer's monitor")
+local byContext = assert(loadfile("lib/surface.luau", "t", env))().new()
+byContext:open("DP-9")
+assert(byContext.output == "DP-9", "an explicit open context should pick the output")
 
 -- The monitor's active workspace is the default highlight, centered when it can be.
 visible[1].active = false
@@ -180,6 +212,16 @@ local records = { { id = 1 }, { id = 2 }, { id = 3 }, { id = 4 } }
 assert(realHypr.window(records, 3, 0)[1].id == 1, "the first window should start at the first workspace")
 assert(realHypr.window(records, 3, 5)[1].id == 2, "the window should clamp to the end")
 assert(#realHypr.window(records, 3, 5) == 3, "the clamped window should stay full")
+
+-- A workspace referencing a monitor the compositor did not list must not crash
+-- the refresh (a failed `monitors` query leaves orphaned monitor ids).
+local orphans = realHypr.workspaces({ monitors = {}, workspaces = { { id = 3, monitorID = 7 } }, clients = {} },
+  nil, true, true)
+assert(#orphans == 1 and orphans[1].id == 3, "orphaned workspaces should still be listed")
+local orphanState = realHypr.groupState({}, { { id = 3, monitorID = 7 } }, {})
+assert(orphanState.workspaces[1].monitor.id == 7, "the orphaned reference should keep its id")
+assert(orphanState.workspaces[1].monitor.name == nil, "an unknown monitor should stay nameless")
+assert(orphanState.workspaces[1].monitor.monitor == nil, "an unknown monitor should carry no raw table")
 
 -- Floating windows are ignored by the preview layout.
 local floatItems = realHypr.windowItems({ clients = {

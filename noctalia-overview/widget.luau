@@ -1,17 +1,7 @@
 --!nonstrict
 local OVERVIEW = "alchemistaloha/noctalia-overview:overview"
-local overviewOpen = noctalia.state.get("overview_open") == true
 
 barWidget.setTooltip(noctalia.tr("widget.tooltip"))
-noctalia.state.watch("overview_open", function(value)
-  overviewOpen = value == true
-end)
-
-local function currentOutput()
-  local name = barWidget.outputName()
-  if type(name) == "string" and name ~= "" then return name end
-  return noctalia.focusedOutputName()
-end
 
 local function render()
   barWidget.render(ui.row({ gap = 5, paddingH = 3, align = "center" }, {
@@ -20,9 +10,8 @@ local function render()
 end
 
 function onClick()
-  if not overviewOpen then
-    noctalia.state.set("overview_output", currentOutput() or "")
-  end
+  -- The panel follows the focused output on open, so a click on this bar lands
+  -- on this bar's monitor without recording anything.
   noctalia.togglePanel(OVERVIEW)
 end
 

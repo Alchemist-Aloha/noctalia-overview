@@ -50,7 +50,6 @@ assert(tree.children[1].kind == "glyph" and tree.children[1].props.name == "layo
 
 env.onClick()
 assert(toggles[#toggles] == overviewId and open[overviewId] == true, "click should open the overview")
-assert(values.overview_output == "TEST-1", "opening should record the bar's output")
 env.onClick()
 assert(open[overviewId] == false, "second click should close the overview")
 print("widget interaction checks passed")

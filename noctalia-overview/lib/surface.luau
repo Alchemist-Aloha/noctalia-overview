@@ -87,6 +87,7 @@ function M.new()
     maxOffset = 0,
     selected = 1,
     selectActive = false,
+    resolveOutput = false,
     selectedWindow = nil,
     hoveredWindow = nil,
     fetching = false,
@@ -329,6 +330,12 @@ function M.new()
 
   -- Workspace records for the preview window, sized to the panel.
   local function refreshVisible()
+    -- Panels get no output name from the host, so pin the output once from the
+    -- monitor the panel landed on (pointer's monitor, else the focused one).
+    if self.resolveOutput and #(self.snapshot.monitors or {}) > 0 then
+      self.resolveOutput = false
+      self.output = hypr.activeOutput(self.snapshot) or self.output
+    end
     self.workspaces = hypr.workspaces(self.snapshot, self.output,
       noctalia.getConfig("show_empty"), noctalia.getConfig("show_special"))
     self.maxOffset = math.max(0, #self.workspaces - hypr.LAYOUT.previewCount)
@@ -467,8 +474,14 @@ function M.new()
     self.generation = self.generation + 1
     self.opened = true
     self.fetching = false
-    self.output = tostring(noctalia.state.get("overview_output") or "")
-    if context and context ~= "" then self.output = context end
+    -- An explicit open context names the output; otherwise the panel follows
+    -- the monitor it opens on, resolved from the first snapshot with monitors.
+    self.output = ""
+    self.resolveOutput = true
+    if context and context ~= "" then
+      self.output = context
+      self.resolveOutput = false
+    end
     self.offset = 0
     self.selected = 1
     self.selectActive = true

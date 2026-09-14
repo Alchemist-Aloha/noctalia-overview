@@ -270,6 +270,9 @@ function Hypr.fetch(callback)
     local acceptedWorkspaces = Hypr.queryJson({ "workspaces" }, function(value)
         done("workspaces", value)
     end)
+    local acceptedCursor = Hypr.queryJson({ "cursorpos" }, function(value)
+        done("cursor", value)
+    end)
 
     -- runAsync can reject before installing a callback.  Complete those legs
     -- asynchronously through the same accounting path without changing the
@@ -277,7 +280,32 @@ function Hypr.fetch(callback)
     if not acceptedClients then done("clients", {}) end
     if not acceptedMonitors then done("monitors", {}) end
     if not acceptedWorkspaces then done("workspaces", {}) end
-    return acceptedClients and acceptedMonitors and acceptedWorkspaces
+    if not acceptedCursor then done("cursor", {}) end
+    return acceptedClients and acceptedMonitors and acceptedWorkspaces and acceptedCursor
+end
+
+-- Output under the pointer, falling back to the focused monitor. Panel scripts
+-- get no output from the host snapshot, and the panel is placed on the monitor
+-- the pointer is on, so this is the output an open overview belongs to.
+function Hypr.activeOutput(snapshot)
+    local monitors = (snapshot and snapshot.monitors) or {}
+    local cursor = snapshot and snapshot.cursor
+    local x, y = tonumber(cursor and cursor.x), tonumber(cursor and cursor.y)
+    if x and y then
+        for _, monitor in ipairs(monitors) do
+            local mx, my = tonumber(monitor.x), tonumber(monitor.y)
+            local mw, mh = tonumber(monitor.width), tonumber(monitor.height)
+            if mx and my and mw and mh and x >= mx and x < mx + mw and y >= my and y < my + mh then
+                return monitor.name
+            end
+        end
+    end
+    for _, monitor in ipairs(monitors) do
+        if monitor.focused then
+            return monitor.name
+        end
+    end
+    return nil
 end
 
 -- Hyprland 0.55 evaluates Lua dispatchers; older releases use hyprctl dispatch.
@@ -349,10 +377,14 @@ local function ensureMonitor(monitorsByKey, monitors, monitor)
     if entry then
         return entry
     end
+    -- A workspace can reference a monitor the compositor did not list (a failed
+    -- `monitors` query, a monitor just unplugged): keep the entry usable and
+    -- nameless instead of indexing the raw reference.
+    local rawMonitor = type(monitor) == "table" and monitor or nil
     entry = {
         id = monitorId(monitor),
-        name = monitor and monitor.name or nil,
-        monitor = monitor,
+        name = rawMonitor and rawMonitor.name or nil,
+        monitor = rawMonitor,
         workspaces = {},
         clients = {},
     }
