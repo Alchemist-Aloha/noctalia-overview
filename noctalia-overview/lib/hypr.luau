@@ -245,15 +245,21 @@ Hypr.query = Hypr.queryJson
 -- represented by an empty list so one transient compositor error cannot strand
 -- the refresh callback.
 function Hypr.fetch(callback)
-    local snapshot = { clients = {}, monitors = {}, workspaces = {} }
-    local pending = 3
+    local snapshot = { clients = {}, monitors = {}, workspaces = {}, cursor = {} }
+    local pending = 4
     local finished = false
 
-    local function done(field, value)
+    local function done(field, value, rejected)
         if finished then
             return
         end
         snapshot[field] = type(value) == "table" and value or {}
+        if rejected then
+            -- The host had no async command slot left; the caller must not read
+            -- that as an empty compositor result.
+            snapshot.rejected = snapshot.rejected or {}
+            snapshot.rejected[field] = true
+        end
         pending = pending - 1
         if pending == 0 then
             finished = true
@@ -275,12 +281,11 @@ function Hypr.fetch(callback)
     end)
 
     -- runAsync can reject before installing a callback.  Complete those legs
-    -- asynchronously through the same accounting path without changing the
-    -- public callback contract.
-    if not acceptedClients then done("clients", {}) end
-    if not acceptedMonitors then done("monitors", {}) end
-    if not acceptedWorkspaces then done("workspaces", {}) end
-    if not acceptedCursor then done("cursor", {}) end
+    -- through the same accounting path without changing the callback contract.
+    if not acceptedClients then done("clients", {}, true) end
+    if not acceptedMonitors then done("monitors", {}, true) end
+    if not acceptedWorkspaces then done("workspaces", {}, true) end
+    if not acceptedCursor then done("cursor", {}, true) end
     return acceptedClients and acceptedMonitors and acceptedWorkspaces and acceptedCursor
 end
 
@@ -594,6 +599,12 @@ function Hypr.newCaptureManager(prefix, onImage)
     onImage = type(prefix) == "table" and options.onImage or onImage
     local directory = options.directory
     local entries = {}
+    local queue = {}
+    local inFlight = 0
+    -- The host allows only a handful of concurrent async commands per plugin,
+    -- and one `grim` per window would otherwise crowd out the `hyprctl` legs
+    -- (a rejected leg used to look like an empty window list).
+    local maxInFlight = math.max(1, numberOr(options.maxInFlight, 3))
     local serial = 0
     local manager = {}
 
@@ -616,6 +627,50 @@ function Hypr.newCaptureManager(prefix, onImage)
         return key(window.stableId or window.address or window.id or window.pid, nil)
     end
 
+    local start
+    local function pump()
+        while inFlight < maxInFlight and #queue > 0 do
+            local entry = table.remove(queue, 1)
+            if entries[entry.id] == entry then
+                start(entry)
+            end
+        end
+    end
+
+    start = function(entry)
+        local stableId = entry.id
+        local path = entry.nextPath
+        inFlight = inFlight + 1
+        local accepted = noctalia.runAsync({ "grim", "-T", stableId, path }, function(result)
+            inFlight = inFlight - 1
+            local current = entries[stableId]
+            if current ~= entry then
+                noctalia.removeFile(path)
+            else
+                entry.inFlight = false
+                if result.exitCode ~= 0 or result.timedOut then
+                    entries[stableId] = entry.previous
+                    noctalia.removeFile(path)
+                    report(onImage, stableId, nil, result.stderr or "grim failed", result)
+                else
+                    if entry.path then noctalia.removeFile(entry.path) end
+                    entry.path = path
+                    entry.nextPath = nil
+                    report(onImage, stableId, path, nil, result)
+                end
+            end
+            pump()
+        end, options.timeoutMs)
+        if not accepted then
+            inFlight = inFlight - 1
+            entries[stableId] = entry.previous
+            noctalia.removeFile(path)
+            report(onImage, stableId, nil, "grim request was rejected", nil)
+            pump()
+        end
+        return accepted
+    end
+
     function manager:request(window, force)
         local stableId = stableIdOf(window)
         if not stableId then
@@ -628,45 +683,26 @@ function Hypr.newCaptureManager(prefix, onImage)
         if old and old.path and force ~= true then
             return true
         end
-        -- Keep the last good frame visible until the replacement is ready.
-        local entry = { id = stableId, path = old and old.path or nil, nextPath = pathFor(stableId), inFlight = true }
-        entries[stableId] = entry
         local captureDirectory = directory or pluginDataDirectory
-        local ok, mkdirError = true, nil
         if captureDirectory then
-            ok, mkdirError = noctalia.mkdirAll(captureDirectory)
-        end
-        if not ok then
-            entries[stableId] = nil
-            report(onImage, stableId, nil, "could not create screenshot directory: " .. tostring(mkdirError))
-            return false
-        end
-
-        local path = entry.nextPath
-        local accepted = noctalia.runAsync({ "grim", "-T", stableId, path }, function(result)
-            local current = entries[stableId]
-            if current ~= entry then
-                noctalia.removeFile(path)
-                return
+            local ok, mkdirError = noctalia.mkdirAll(captureDirectory)
+            if not ok then
+                report(onImage, stableId, nil, "could not create screenshot directory: " .. tostring(mkdirError))
+                return false
             end
-            entry.inFlight = false
-            if result.exitCode ~= 0 or result.timedOut then
-                entries[stableId] = old
-                noctalia.removeFile(path)
-                report(onImage, stableId, nil, result.stderr or "grim failed", result)
-                return
-            end
-            if entry.path then noctalia.removeFile(entry.path) end
-            entry.path = path
-            entry.nextPath = nil
-            report(onImage, stableId, path, nil, result)
-        end, options.timeoutMs)
-        if not accepted then
-            entries[stableId] = old
-            noctalia.removeFile(path)
-            report(onImage, stableId, nil, "grim request was rejected", nil)
         end
-        return accepted
+        -- Keep the last good frame visible until the replacement is ready.
+        local entry = {
+            id = stableId,
+            path = old and old.path or nil,
+            previous = old,
+            nextPath = pathFor(stableId),
+            inFlight = true,
+        }
+        entries[stableId] = entry
+        queue[#queue + 1] = entry
+        pump()
+        return true
     end
 
     manager.capture = manager.request
@@ -678,6 +714,12 @@ function Hypr.newCaptureManager(prefix, onImage)
             if stableId then
                 seen[stableId] = true
                 manager:request(window, force ~= false)
+            end
+        end
+        -- Drop queued work for windows that are already gone.
+        for index = #queue, 1, -1 do
+            if not seen[queue[index].id] then
+                table.remove(queue, index)
             end
         end
         for id, entry in pairs(entries) do

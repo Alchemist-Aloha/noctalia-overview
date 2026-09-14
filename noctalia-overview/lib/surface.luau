@@ -330,9 +330,14 @@ function M.new()
 
   -- Workspace records for the preview window, sized to the panel.
   local function refreshVisible()
-    -- Panels get no output name from the host, so pin the output once from the
-    -- monitor the panel landed on (pointer's monitor, else the focused one).
-    if self.resolveOutput and #(self.snapshot.monitors or {}) > 0 then
+    -- Panels get no output name from the host, so pin the output from the first
+    -- snapshot whose monitor list the host actually delivered. Until then keep
+    -- the previous page instead of mixing every monitor's workspaces together.
+    if self.resolveOutput then
+      local reject = self.snapshot.rejected
+      if #(self.snapshot.monitors or {}) == 0 or (reject ~= nil and reject.monitors == true) then
+        return
+      end
       self.resolveOutput = false
       self.output = hypr.activeOutput(self.snapshot) or self.output
     end
@@ -463,10 +468,18 @@ function M.new()
     hypr.fetch(function(snapshot)
       if not self.opened or generation ~= self.generation then return end
       self.fetching = false
-      -- A failed `hyprctl monitors` leg comes back empty; without monitor
-      -- identities every workspace loses its output, so keep the last good list.
-      if #(snapshot.monitors or {}) == 0 then
+      -- A leg the host could not run (busy async slots) or an empty monitors /
+      -- workspaces reply would wipe what we know and drop every workspace, so
+      -- keep the last good list instead. Clients may legitimately be empty.
+      local rejected = snapshot.rejected or {}
+      if rejected.monitors or #(snapshot.monitors or {}) == 0 then
         snapshot.monitors = self.snapshot.monitors or {}
+      end
+      if rejected.workspaces or #(snapshot.workspaces or {}) == 0 then
+        snapshot.workspaces = self.snapshot.workspaces or {}
+      end
+      if rejected.clients then
+        snapshot.clients = self.snapshot.clients or {}
       end
       self.snapshot = snapshot
       refreshVisible()

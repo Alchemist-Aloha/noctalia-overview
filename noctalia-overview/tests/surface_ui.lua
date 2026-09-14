@@ -276,4 +276,54 @@ local mixed = realHypr.panelLayout({
 }, 312, 850)
 assert(mixed.cards[1].previewHeight == mixed.cards[2].previewHeight,
   "empty workspaces should match the preview height of occupied ones")
+-- Hypr.fetch must wait for every leg (a snapshot that reported early dropped
+-- whichever leg finished last) and mark the legs the host rejected.
+local savedNoctalia = _G.noctalia
+local legs = {}
+_G.noctalia = {
+  runAsync = function(argv, callback)
+    local field = argv[#argv]
+    legs[field] = callback
+    return field ~= "cursorpos"
+  end,
+  json = { decode = function(text) return { value = text }, nil end },
+}
+local fetched
+local accepted = realHypr.fetch(function(snapshot) fetched = snapshot end)
+assert(accepted == false, "fetch should report a rejected leg")
+assert(fetched == nil, "fetch must not report before every leg is done")
+for field, callback in pairs(legs) do
+  if field ~= "cursorpos" then callback({ exitCode = 0, stdout = field }) end
+end
+assert(fetched ~= nil, "fetch should report once every accepted leg has landed")
+assert(fetched.rejected ~= nil and fetched.rejected.cursor == true, "a rejected leg should be marked")
+assert(fetched.clients.value == "clients" and fetched.monitors.value == "monitors"
+  and fetched.workspaces.value == "workspaces", "every accepted leg should carry its data")
+assert(fetched.cursor ~= nil, "the snapshot should always have a cursor field")
+
+-- The capture manager must stay inside its share of the host's async command
+-- slots, or the hyprctl legs get rejected and the overview loses data.
+local asyncInFlight, asyncPeak, pending = 0, 0, {}
+_G.noctalia = {
+  pluginDataDir = function() return "/tmp/ovtest" end,
+  mkdirAll = function() return true, nil end,
+  removeFile = function() end,
+  runAsync = function(_, callback)
+    asyncInFlight = asyncInFlight + 1
+    asyncPeak = math.max(asyncPeak, asyncInFlight)
+    pending[#pending + 1] = callback
+    return true
+  end,
+}
+local captures = realHypr.newCaptureManager("test", function() end)
+local windows = {}
+for index = 1, 5 do windows[index] = { address = "0xc" .. tostring(index) } end
+captures:update(windows, true)
+assert(asyncPeak == 3, "at most three captures should run at once")
+assert(#pending == 3, "the remaining captures should wait in the queue")
+pending[1]({ exitCode = 0 })
+assert(#pending == 4, "finishing a capture should start the next queued one")
+captures:clear()
+_G.noctalia = savedNoctalia
+
 print("surface UI checks passed")
