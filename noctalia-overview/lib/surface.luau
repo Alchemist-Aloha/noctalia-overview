@@ -463,6 +463,11 @@ function M.new()
     hypr.fetch(function(snapshot)
       if not self.opened or generation ~= self.generation then return end
       self.fetching = false
+      -- A failed `hyprctl monitors` leg comes back empty; without monitor
+      -- identities every workspace loses its output, so keep the last good list.
+      if #(snapshot.monitors or {}) == 0 then
+        snapshot.monitors = self.snapshot.monitors or {}
+      end
       self.snapshot = snapshot
       refreshVisible()
       render()

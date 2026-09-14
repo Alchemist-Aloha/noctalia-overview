@@ -284,28 +284,32 @@ function Hypr.fetch(callback)
     return acceptedClients and acceptedMonitors and acceptedWorkspaces and acceptedCursor
 end
 
--- Output under the pointer, falling back to the focused monitor. Panel scripts
--- get no output from the host snapshot, and the panel is placed on the monitor
--- the pointer is on, so this is the output an open overview belongs to.
+-- The output an overview opening belongs to. Panel scripts get no output from
+-- the host, and Noctalia places a panel on the compositor's focused output
+-- (falling back to the last pointer output, then the first output), so mirror
+-- that order and the content always matches the monitor the panel opens on.
 function Hypr.activeOutput(snapshot)
     local monitors = (snapshot and snapshot.monitors) or {}
+    local first
+    for _, monitor in ipairs(monitors) do
+        if type(monitor) == "table" and type(monitor.name) == "string" and monitor.name ~= "" then
+            if monitor.focused == true then return monitor.name end
+            first = first or monitor.name
+        end
+    end
     local cursor = snapshot and snapshot.cursor
     local x, y = tonumber(cursor and cursor.x), tonumber(cursor and cursor.y)
     if x and y then
         for _, monitor in ipairs(monitors) do
             local mx, my = tonumber(monitor.x), tonumber(monitor.y)
             local mw, mh = tonumber(monitor.width), tonumber(monitor.height)
-            if mx and my and mw and mh and x >= mx and x < mx + mw and y >= my and y < my + mh then
+            if mx and my and mw and mh and mw > 0 and mh > 0
+                and x >= mx and x < mx + mw and y >= my and y < my + mh then
                 return monitor.name
             end
         end
     end
-    for _, monitor in ipairs(monitors) do
-        if monitor.focused then
-            return monitor.name
-        end
-    end
-    return nil
+    return first
 end
 
 -- Hyprland 0.55 evaluates Lua dispatchers; older releases use hyprctl dispatch.
@@ -362,34 +366,53 @@ function Hypr.dispatch(dispatcher, arguments, callback, timeoutMs)
     return true
 end
 
-local function ensureMonitor(monitorsByKey, monitors, monitor)
-    local id = key(monitorId(monitor), "unknown")
+-- Find or create the monitor entry behind whatever the compositor reported: a
+-- monitor table, a monitor id, or a connector name. Entries are registered
+-- under both the id and the name so every later lookup finds them, and a
+-- reference whose monitor the compositor did not list (a failed `monitors`
+-- query, a just-unplugged monitor) still keeps the name a workspace knew.
+local function ensureMonitor(monitorsByKey, monitors, reference, referenceName)
+    local idValue = monitorId(reference)
+    local id = key(idValue, "unknown")
     local entry = monitorsByKey[id]
-    if not entry and type(monitor) ~= "table" then
+    if entry == nil and referenceName ~= nil and referenceName ~= "" then
+        entry = monitorsByKey[referenceName]
+    end
+    if entry == nil and type(reference) ~= "table" then
         for _, candidate in ipairs(monitors) do
-            if tostring(candidate.id) == tostring(monitor) or tostring(candidate.name) == tostring(monitor) then
+            if tostring(candidate.id) == tostring(reference) or tostring(candidate.name) == tostring(reference) then
                 entry = candidate
-                monitorsByKey[id] = candidate
                 break
             end
         end
     end
-    if entry then
-        return entry
+    local rawMonitor = type(reference) == "table" and reference or nil
+    if entry == nil then
+        entry = {
+            id = idValue,
+            name = (rawMonitor and rawMonitor.name) or referenceName or nil,
+            monitor = rawMonitor,
+            workspaces = {},
+            clients = {},
+        }
+        monitors[#monitors + 1] = entry
+    else
+        -- Learn what this reference adds: a raw monitor table carries the
+        -- focused/active flags, a workspace reference carries the name.
+        if entry.monitor == nil and rawMonitor ~= nil then
+            entry.monitor = rawMonitor
+        end
+        if (entry.name == nil or entry.name == "") and referenceName ~= nil and referenceName ~= "" then
+            entry.name = referenceName
+        end
+        if entry.id == nil then
+            entry.id = idValue
+        end
     end
-    -- A workspace can reference a monitor the compositor did not list (a failed
-    -- `monitors` query, a monitor just unplugged): keep the entry usable and
-    -- nameless instead of indexing the raw reference.
-    local rawMonitor = type(monitor) == "table" and monitor or nil
-    entry = {
-        id = monitorId(monitor),
-        name = rawMonitor and rawMonitor.name or nil,
-        monitor = rawMonitor,
-        workspaces = {},
-        clients = {},
-    }
     monitorsByKey[id] = entry
-    monitors[#monitors + 1] = entry
+    if entry.name ~= nil and entry.name ~= "" then
+        monitorsByKey[entry.name] = entry
+    end
     return entry
 end
 
@@ -422,7 +445,9 @@ function Hypr.groupState(monitors, workspaces, clients)
         state.workspaceById[workspaceKey] = workspaceEntry
         state.workspaces[#state.workspaces + 1] = workspaceEntry
 
-        local monitor = ensureMonitor(state.monitorById, state.monitors, workspace.monitorID or workspace.monitor)
+        local monitorName = type(workspace.monitor) == "string" and workspace.monitor or nil
+        local monitor = ensureMonitor(state.monitorById, state.monitors,
+            workspace.monitorID or workspace.monitor, monitorName)
         workspaceEntry.monitor = monitor
         monitor.workspaces[#monitor.workspaces + 1] = workspaceEntry
     end
@@ -483,28 +508,43 @@ function Hypr.workspaces(snapshot, outputName, showEmpty, showSpecial)
 
     for _, workspace in ipairs(state.workspaces) do
         local monitor = workspace.monitor
-        local monitorName = monitor and (monitor.name or monitor.id) or nil
         local raw = workspace.workspace or {}
         local id = workspace.id
-        local special = (type(id) == "number" and id < 0) or (type(raw.name) == "string" and raw.name:match("^special:"))
+        local name = workspace.name or raw.name or tostring(id or "")
+        local special = (type(id) == "number" and id < 0)
+            or (type(name) == "string" and name:match("^special:") ~= nil)
+        -- Which workspace the monitor currently shows lives in the monitors
+        -- list, not in the workspaces list. A workspace only referenced by a
+        -- client has no monitor table and simply stays inactive.
+        local rawMonitor = monitor and monitor.monitor or nil
+        local function matchesActive(reference)
+            if type(reference) ~= "table" then return false end
+            if reference.id ~= nil and tostring(reference.id) == tostring(id) then return true end
+            return reference.name ~= nil and reference.name ~= "" and tostring(reference.name) == tostring(name)
+        end
+        local isActive = false
+        if type(rawMonitor) == "table" then
+            isActive = matchesActive(rawMonitor.activeWorkspace)
+                or (special and matchesActive(rawMonitor.specialWorkspace))
+        end
+        -- The connector name is the filter key; keep working when the monitors
+        -- list omitted this monitor but the workspace named it.
+        local monitorName = monitor and (monitor.name or monitor.id)
+            or (type(raw.monitor) == "string" and raw.monitor) or nil
         local matchesOutput = outputKey == nil or tostring(monitorName) == outputKey
-        local activeWorkspace = monitor and monitor.monitor and monitor.monitor.activeWorkspace
-        local isActive = activeWorkspace and (tostring(workspaceId(activeWorkspace)) == tostring(id)
-            or (special and tostring(activeWorkspace.name or "") == tostring(workspace.name or "")))
         if matchesOutput and (showSpecial or not special) and (showEmpty or #workspace.clients > 0 or isActive) then
             local record = {
                 id = id,
-                name = workspace.name or raw.name or tostring(id or ""),
-                monitor = monitor and (monitor.name or monitor.id) or nil,
+                name = name,
+                monitor = monitorName,
                 clients = {},
-                active = false,
+                active = isActive == true,
                 special = special,
                 workspace = raw,
             }
             for _, clientEntry in ipairs(workspace.clients) do
                 record.clients[#record.clients + 1] = clientEntry.client
             end
-            record.active = isActive == true
             candidates[#candidates + 1] = record
         end
     end

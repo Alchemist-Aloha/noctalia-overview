@@ -119,21 +119,25 @@ assert(threeCards.cardWidth == realHypr.panelLayout(visible, 312, 850).cardWidth
   "every card should get one fixed size")
 assert(rendered.children[2].props.justify == "center", "the preview row should stay centered")
 
--- The monitor under the pointer wins, then the focused one; an explicit open
--- context overrides both.
+-- The focused monitor wins (Noctalia places the panel there), the pointer's is
+-- the fallback, and the first output is the last resort; an explicit open
+-- context overrides all of it.
 local monitors = {
   { name = "A", x = 0, y = 0, width = 1920, height = 1080 },
   { name = "B", x = 1920, y = 0, width = 1920, height = 1080, focused = true },
 }
-assert(realHypr.activeOutput({ monitors = monitors, cursor = { x = 2500, y = 400 } }) == "B",
-  "the pointer's monitor should win")
-assert(realHypr.activeOutput({ monitors = monitors, cursor = { x = 100, y = 100 } }) == "A",
-  "a pointer on another monitor should pick that one")
-assert(realHypr.activeOutput({ monitors = monitors }) == "B",
-  "without a cursor position the focused monitor should win")
+assert(realHypr.activeOutput({ monitors = monitors, cursor = { x = 100, y = 100 } }) == "B",
+  "the focused monitor should win over the pointer, matching panel placement")
+assert(realHypr.activeOutput({ monitors = { monitors[1] }, cursor = { x = 100, y = 100 } }) == "A",
+  "the pointer's monitor should be the fallback")
+assert(realHypr.activeOutput({ monitors = { { name = "A" }, { name = "B" } } }) == "A",
+  "the first named monitor should be the last resort")
+assert(realHypr.activeOutput({ monitors = monitors, cursor = { x = 9000, y = 100 } }) == "B",
+  "a pointer outside every monitor should fall back to the focused one")
+assert(realHypr.activeOutput({ monitors = {} }) == nil, "no monitors means no output")
 local byKeybind = assert(loadfile("lib/surface.luau", "t", env))().new()
 byKeybind:open("")
-assert(byKeybind.output == "TEST-2", "a keybind open should follow the pointer's monitor")
+assert(byKeybind.output == "TEST-1", "a keybind open should follow the focused monitor")
 local byContext = assert(loadfile("lib/surface.luau", "t", env))().new()
 byContext:open("DP-9")
 assert(byContext.output == "DP-9", "an explicit open context should pick the output")
@@ -213,15 +217,50 @@ assert(realHypr.window(records, 3, 0)[1].id == 1, "the first window should start
 assert(realHypr.window(records, 3, 5)[1].id == 2, "the window should clamp to the end")
 assert(#realHypr.window(records, 3, 5) == 3, "the clamped window should stay full")
 
--- A workspace referencing a monitor the compositor did not list must not crash
--- the refresh (a failed `monitors` query leaves orphaned monitor ids).
-local orphans = realHypr.workspaces({ monitors = {}, workspaces = { { id = 3, monitorID = 7 } }, clients = {} },
-  nil, true, true)
-assert(#orphans == 1 and orphans[1].id == 3, "orphaned workspaces should still be listed")
-local orphanState = realHypr.groupState({}, { { id = 3, monitorID = 7 } }, {})
-assert(orphanState.workspaces[1].monitor.id == 7, "the orphaned reference should keep its id")
-assert(orphanState.workspaces[1].monitor.name == nil, "an unknown monitor should stay nameless")
-assert(orphanState.workspaces[1].monitor.monitor == nil, "an unknown monitor should carry no raw table")
+-- Detection: a workspace whose monitor the compositor did not list keeps the
+-- name it knows and still matches its output, so empty workspaces are not lost.
+local orphans = realHypr.workspaces({
+  monitors = {},
+  workspaces = { { id = 7, name = "7", monitor = "DP-2", monitorID = 1, windows = 0 } },
+  clients = {},
+}, "DP-2", true, false)
+assert(#orphans == 1 and orphans[1].id == 7, "an orphaned empty workspace should still be listed")
+assert(orphans[1].monitor == "DP-2", "the orphaned workspace should keep its connector name")
+local unknown = realHypr.workspaces({ monitors = {}, workspaces = { { id = 8, monitorID = 9, windows = 0 } },
+  clients = {} }, "DP-2", true, false)
+assert(#unknown == 0, "a workspace with no known monitor should not leak onto another output")
+
+-- Active detection: the monitors list says which workspace is shown, for both
+-- normal and special workspaces.
+local detect = {
+  monitors = {
+    { id = 0, name = "DP-1", x = 0, y = 0, width = 1920, height = 1080, focused = true,
+      activeWorkspace = { id = 2, name = "2" }, specialWorkspace = { id = 0, name = "" } },
+  },
+  workspaces = {
+    { id = 1, name = "1", monitor = "DP-1", monitorID = 0, windows = 1 },
+    { id = 2, name = "2", monitor = "DP-1", monitorID = 0, windows = 0 },
+  },
+  clients = { { address = "0xd1", workspace = { id = 1, name = "1" }, monitor = 0 } },
+}
+local shown = realHypr.workspaces(detect, "DP-1", true, false)
+assert(#shown == 2, "show_empty should list the empty workspace too")
+assert(shown[1].active == false and shown[2].active == true, "the monitor's active workspace should be flagged")
+local kept = realHypr.workspaces(detect, "DP-1", false, false)
+assert(#kept == 2, "show_empty=false must keep the active (empty) workspace")
+local specials = realHypr.workspaces({
+  monitors = {
+    { id = 0, name = "DP-1", focused = true, activeWorkspace = { id = 1, name = "1" },
+      specialWorkspace = { id = -99, name = "special:scratch" } },
+  },
+  workspaces = {
+    { id = 1, name = "1", monitor = "DP-1", monitorID = 0, windows = 1 },
+    { id = -99, name = "special:scratch", monitor = "DP-1", monitorID = 0, windows = 0 },
+  },
+  clients = { { address = "0xd2", workspace = { id = 1, name = "1" }, monitor = 0 } },
+}, "DP-1", false, true)
+assert(#specials == 2 and specials[2].special == true and specials[2].active == true,
+  "the active special workspace should be flagged")
 
 -- Floating windows are ignored by the preview layout.
 local floatItems = realHypr.windowItems({ clients = {
